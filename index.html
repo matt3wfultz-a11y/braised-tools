@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Brief — Braised Animation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Serif:ital,opsz,wght@0,8..144,300;0,8..144,400;0,8..144,500;0,8..144,600;1,8..144,300;1,8..144,400&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #212121;
+      --surface: #1B3643;
+      --surface-hover: #1f404f;
+      --accent: #00A669;
+      --accent-hover: #00bf77;
+      --text: #FAF5F5;
+      --text-muted: rgba(250, 245, 245, 0.55);
+      --border: rgba(250, 245, 245, 0.1);
+    }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Roboto Serif', Georgia, serif;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── HEADER ── */
+    header {
+      padding: 36px 0 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .logo {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .logo span { color: var(--accent); }
+
+    .progress-wrap { display: flex; flex-direction: column; gap: 8px; }
+
+    .progress-bar {
+      height: 2px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ── STEPS ── */
+    main { flex: 1; }
+
+    .step { display: none; animation: fadeUp 0.3s ease; }
+    .step.active { display: block; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .step-header { margin-bottom: 36px; }
+
+    .step-title {
+      font-size: 28px;
+      font-weight: 600;
+      line-height: 1.25;
+      margin-bottom: 6px;
+    }
+
+    .step-sub {
+      font-size: 14px;
+      font-weight: 300;
+      font-style: italic;
+      color: var(--text-muted);
+    }
+
+    /* ── FIELDS ── */
+    .field { margin-bottom: 28px; }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    label .req { color: var(--accent); margin-left: 2px; }
+
+    label .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 300;
+    }
+
+    input[type="text"],
+    input[type="email"],
+    input[type="date"],
+    textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Roboto Serif', Georgia, serif;
+      font-size: 15px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.2s;
+      -webkit-appearance: none;
+    }
+
+    input[type="text"]:focus,
+    input[type="email"]:focus,
+    input[type="date"]:focus,
+    textarea:focus {
+      border-color: rgba(0, 166, 105, 0.6);
+    }
+
+    input::placeholder, textarea::placeholder { color: var(--text-muted); }
+
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(0.6);
+      cursor: pointer;
+    }
+
+    textarea { min-height: 112px; resize: none; }
+
+    /* ── TAGS ── */
+    .tag-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tag {
+      padding: 9px 18px;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-family: 'Roboto Serif', Georgia, serif;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .tag:hover {
+      border-color: rgba(0, 166, 105, 0.45);
+      color: var(--text);
+    }
+
+    .tag.selected {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ── RADIO ── */
+    .radio-group { display: flex; flex-direction: column; gap: 10px; }
+
+    .radio-option {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .radio-option:hover { border-color: rgba(0, 166, 105, 0.4); }
+
+    .radio-option.selected {
+      border-color: var(--accent);
+      background: rgba(0, 166, 105, 0.07);
+    }
+
+    .radio-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .radio-option.selected .radio-dot { border-color: var(--accent); }
+
+    .radio-option.selected .radio-dot::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: block;
+    }
+
+    .radio-label { font-size: 15px; }
+
+    /* ── ERRORS ── */
+    .error-msg {
+      font-size: 12px;
+      color: #ff7b7b;
+      margin-top: 6px;
+      display: none;
+    }
+
+    .field.has-error .error-msg { display: block; }
+    .field.has-error input,
+    .field.has-error textarea { border-color: rgba(255, 123, 123, 0.6); }
+
+    /* ── SUMMARY ── */
+    .summary-section {
+      margin-bottom: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .summary-section-title {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+
+    .summary-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 10px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .summary-row:last-child { margin-bottom: 0; }
+
+    .summary-key {
+      color: var(--text-muted);
+      min-width: 130px;
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+
+    .summary-val { color: var(--text); }
+
+    /* ── FOOTER NAV ── */
+    footer {
+      padding: 28px 0 40px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      padding: 13px 28px;
+      border-radius: 100px;
+      font-family: 'Roboto Serif', Georgia, serif;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .btn-back {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .btn-back:hover {
+      border-color: rgba(250, 245, 245, 0.3);
+      color: var(--text);
+    }
+
+    .btn-next {
+      background: var(--accent);
+      color: #fff;
+      margin-left: auto;
+    }
+
+    .btn-next:hover { background: var(--accent-hover); }
+
+    /* ── SUCCESS ── */
+    .success-wrap {
+      text-align: center;
+      padding: 40px 0;
+    }
+
+    .success-icon {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: rgba(0, 166, 105, 0.12);
+      border: 1px solid rgba(0, 166, 105, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 26px;
+    }
+
+    .success-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .success-sub {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .btn-restart {
+      display: inline-block;
+      margin-top: 32px;
+      padding: 12px 24px;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-family: 'Roboto Serif', Georgia, serif;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-restart:hover {
+      border-color: rgba(250, 245, 245, 0.3);
+      color: var(--text);
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 480px) {
+      .step-title { font-size: 23px; }
+      .summary-row { flex-direction: column; gap: 3px; }
+      .summary-key { min-width: unset; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="logo">Braised <span>Animation</span> &nbsp;·&nbsp; Project Brief</div>
+    <div class="progress-wrap">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-meta">
+        <span id="stepLabel"></span>
+        <span id="stepName"></span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- STEP 1 · PROJECT BASICS -->
+    <div class="step" id="step-1">
+      <div class="step-header">
+        <h1 class="step-title">Project Basics</h1>
+        <p class="step-sub">Tell us what you're making.</p>
+      </div>
+
+      <div class="field" id="field-projectName">
+        <label>Project Name <span class="req">*</span></label>
+        <input type="text" id="projectName" placeholder="e.g. Q3 Product Launch Video">
+        <p class="error-msg">Please give your project a name.</p>
+      </div>
+
+      <div class="field">
+        <label>Video Type</label>
+        <div class="tag-group" data-key="videoType" data-multi="false">
+          <div class="tag" data-val="Explainer Video">Explainer Video</div>
+          <div class="tag" data-val="Brand Film">Brand Film</div>
+          <div class="tag" data-val="Product Demo">Product Demo</div>
+          <div class="tag" data-val="Social Content">Social Content</div>
+          <div class="tag" data-val="Training / Internal">Training / Internal</div>
+          <div class="tag" data-val="Not sure yet">Not sure yet</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Approximate Length</label>
+        <div class="tag-group" data-key="videoLength" data-multi="false">
+          <div class="tag" data-val="Under 30s">Under 30s</div>
+          <div class="tag" data-val="30–60s">30–60s</div>
+          <div class="tag" data-val="1–2 min">1–2 min</div>
+          <div class="tag" data-val="2–5 min">2–5 min</div>
+          <div class="tag" data-val="5+ min">5+ min</div>
+          <div class="tag" data-val="Not sure">Not sure</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 2 · GOALS & MESSAGE -->
+    <div class="step" id="step-2">
+      <div class="step-header">
+        <h1 class="step-title">Goals & Message</h1>
+        <p class="step-sub">What should this video achieve?</p>
+      </div>
+
+      <div class="field">
+        <label>Primary Goal</label>
+        <div class="tag-group" data-key="primaryGoal" data-multi="false">
+          <div class="tag" data-val="Build Brand Awareness">Build Brand Awareness</div>
+          <div class="tag" data-val="Generate Leads">Generate Leads</div>
+          <div class="tag" data-val="Educate Customers">Educate Customers</div>
+          <div class="tag" data-val="Drive Sales">Drive Sales</div>
+          <div class="tag" data-val="Internal Communication">Internal Communication</div>
+          <div class="tag" data-val="Other">Other</div>
+        </div>
+      </div>
+
+      <div class="field" id="field-keyMessage">
+        <label>Key Message <span class="req">*</span></label>
+        <textarea id="keyMessage" placeholder="What's the single most important thing viewers should take away?"></textarea>
+        <p class="error-msg">Please describe your key message.</p>
+      </div>
+
+      <div class="field">
+        <label>Call to Action</label>
+        <input type="text" id="callToAction" placeholder="e.g. Visit our website, Book a demo, Download the app">
+      </div>
+    </div>
+
+    <!-- STEP 3 · TARGET AUDIENCE -->
+    <div class="step" id="step-3">
+      <div class="step-header">
+        <h1 class="step-title">Target Audience</h1>
+        <p class="step-sub">Who are you speaking to?</p>
+      </div>
+
+      <div class="field" id="field-audience">
+        <label>Describe Your Audience <span class="req">*</span></label>
+        <textarea id="audience" placeholder="e.g. Mid-level marketing managers at B2B SaaS companies looking for a simpler way to communicate their product"></textarea>
+        <p class="error-msg">Please describe your target audience.</p>
+      </div>
+
+      <div class="field">
+        <label>Age Range <span class="hint">(select all that apply)</span></label>
+        <div class="tag-group" data-key="ageRange" data-multi="true">
+          <div class="tag" data-val="18–24">18–24</div>
+          <div class="tag" data-val="25–34">25–34</div>
+          <div class="tag" data-val="35–44">35–44</div>
+          <div class="tag" data-val="45–54">45–54</div>
+          <div class="tag" data-val="55+">55+</div>
+          <div class="tag" data-val="All ages">All ages</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Industry / Sector</label>
+        <input type="text" id="industry" placeholder="e.g. Healthcare, SaaS, Retail, Education">
+      </div>
+    </div>
+
+    <!-- STEP 4 · STYLE & TONE -->
+    <div class="step" id="step-4">
+      <div class="step-header">
+        <h1 class="step-title">Style & Tone</h1>
+        <p class="step-sub">How should it look and feel?</p>
+      </div>
+
+      <div class="field">
+        <label>Animation Style <span class="hint">(select all that apply)</span></label>
+        <div class="tag-group" data-key="animStyle" data-multi="true">
+          <div class="tag" data-val="2D Animation">2D Animation</div>
+          <div class="tag" data-val="3D Animation">3D Animation</div>
+          <div class="tag" data-val="Motion Graphics">Motion Graphics</div>
+          <div class="tag" data-val="Live Action + Animation">Live Action + Animation</div>
+          <div class="tag" data-val="Character Animation">Character Animation</div>
+          <div class="tag" data-val="Not sure">Not sure</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Tone <span class="hint">(select all that apply)</span></label>
+        <div class="tag-group" data-key="tone" data-multi="true">
+          <div class="tag" data-val="Professional">Professional</div>
+          <div class="tag" data-val="Playful">Playful</div>
+          <div class="tag" data-val="Bold & Energetic">Bold & Energetic</div>
+          <div class="tag" data-val="Emotional / Heartfelt">Emotional / Heartfelt</div>
+          <div class="tag" data-val="Cinematic">Cinematic</div>
+          <div class="tag" data-val="Minimalist">Minimalist</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Style References</label>
+        <textarea id="styleRefs" placeholder="Links, descriptions, or 'think X meets Y' — anything that gives us a visual direction"></textarea>
+      </div>
+
+      <div class="field">
+        <label>Do you have brand guidelines?</label>
+        <div class="radio-group" data-key="brandGuidelines">
+          <div class="radio-option" data-val="Yes — I'll share them">
+            <div class="radio-dot"></div>
+            <span class="radio-label">Yes — I'll share them</span>
+          </div>
+          <div class="radio-option" data-val="In progress">
+            <div class="radio-dot"></div>
+            <span class="radio-label">In progress</span>
+          </div>
+          <div class="radio-option" data-val="No">
+            <div class="radio-dot"></div>
+            <span class="radio-label">No</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 5 · TIMELINE & BUDGET -->
+    <div class="step" id="step-5">
+      <div class="step-header">
+        <h1 class="step-title">Timeline & Budget</h1>
+        <p class="step-sub">When do you need it and what's the investment?</p>
+      </div>
+
+      <div class="field">
+        <label>Target Launch Date</label>
+        <input type="date" id="launchDate">
+      </div>
+
+      <div class="field">
+        <label>Is this deadline flexible?</label>
+        <div class="radio-group" data-key="deadlineFlexible">
+          <div class="radio-option" data-val="Yes, flexible">
+            <div class="radio-dot"></div>
+            <span class="radio-label">Yes, flexible</span>
+          </div>
+          <div class="radio-option" data-val="Somewhat — some wiggle room">
+            <div class="radio-dot"></div>
+            <span class="radio-label">Somewhat — some wiggle room</span>
+          </div>
+          <div class="radio-option" data-val="No, it's fixed">
+            <div class="radio-dot"></div>
+            <span class="radio-label">No, it's fixed</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Budget Range</label>
+        <div class="tag-group" data-key="budget" data-multi="false">
+          <div class="tag" data-val="Under $5,000">Under $5,000</div>
+          <div class="tag" data-val="$5,000–$15,000">$5,000–$15,000</div>
+          <div class="tag" data-val="$15,000–$30,000">$15,000–$30,000</div>
+          <div class="tag" data-val="$30,000+">$30,000+</div>
+          <div class="tag" data-val="Let's discuss">Let's discuss</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 6 · CONTACT INFO -->
+    <div class="step" id="step-6">
+      <div class="step-header">
+        <h1 class="step-title">Your Details</h1>
+        <p class="step-sub">So we can follow up on your brief.</p>
+      </div>
+
+      <div class="field" id="field-fullName">
+        <label>Full Name <span class="req">*</span></label>
+        <input type="text" id="fullName" placeholder="Jane Smith">
+        <p class="error-msg">Please enter your name.</p>
+      </div>
+
+      <div class="field">
+        <label>Company / Brand</label>
+        <input type="text" id="company" placeholder="Acme Inc.">
+      </div>
+
+      <div class="field" id="field-email">
+        <label>Email Address <span class="req">*</span></label>
+        <input type="email" id="email" placeholder="jane@acmeinc.com">
+        <p class="error-msg">Please enter a valid email address.</p>
+      </div>
+
+      <div class="field">
+        <label>Anything else to share?</label>
+        <textarea id="additionalNotes" placeholder="Other context, questions, or things we should know about this project"></textarea>
+      </div>
+
+      <div class="field">
+        <label>How did you find us?</label>
+        <div class="tag-group" data-key="howFound" data-multi="false">
+          <div class="tag" data-val="Referral">Referral</div>
+          <div class="tag" data-val="Social Media">Social Media</div>
+          <div class="tag" data-val="Google">Google</div>
+          <div class="tag" data-val="Portfolio / Dribbble">Portfolio / Dribbble</div>
+          <div class="tag" data-val="Other">Other</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 7 · REVIEW -->
+    <div class="step" id="step-7">
+      <div class="step-header">
+        <h1 class="step-title">Review Your Brief</h1>
+        <p class="step-sub">Everything look right? Download your PDF below.</p>
+      </div>
+      <div id="summaryContent"></div>
+    </div>
+
+    <!-- STEP 8 · SUCCESS -->
+    <div class="step" id="step-8">
+      <div class="success-wrap">
+        <div class="success-icon">✓</div>
+        <h2 class="success-title">Brief downloaded.</h2>
+        <p class="success-sub">Send it our way at hello@braisedanimation.com — we'll be in touch soon.</p>
+        <button class="btn-restart" onclick="restart()">Start a new brief</button>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <button class="btn btn-back" id="btnBack" onclick="prevStep()">Back</button>
+    <button class="btn btn-next" id="btnNext" onclick="nextStep()">Next →</button>
+  </footer>
+
+</div>
+
+<script>
+  const TOTAL_STEPS = 8;
+  let currentStep = 1;
+
+  const formData = {};
+
+  const stepMeta = [
+    null,
+    { label: 'Project Basics' },
+    { label: 'Goals & Message' },
+    { label: 'Target Audience' },
+    { label: 'Style & Tone' },
+    { label: 'Timeline & Budget' },
+    { label: 'Your Details' },
+    { label: 'Review' },
+    { label: 'Done' },
+  ];
+
+  // ── TAG GROUPS ──
+  document.querySelectorAll('.tag-group').forEach(group => {
+    const key = group.dataset.key;
+    const multi = group.dataset.multi === 'true';
+    formData[key] = multi ? [] : '';
+
+    group.querySelectorAll('.tag').forEach(tag => {
+      tag.addEventListener('click', () => {
+        const val = tag.dataset.val;
+        if (multi) {
+          tag.classList.toggle('selected');
+          formData[key] = [...group.querySelectorAll('.tag.selected')].map(t => t.dataset.val);
+        } else {
+          group.querySelectorAll('.tag').forEach(t => t.classList.remove('selected'));
+          tag.classList.add('selected');
+          formData[key] = val;
+        }
+      });
+    });
+  });
+
+  // ── RADIO GROUPS ──
+  document.querySelectorAll('.radio-group').forEach(group => {
+    const key = group.dataset.key;
+    formData[key] = '';
+
+    group.querySelectorAll('.radio-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        group.querySelectorAll('.radio-option').forEach(o => o.classList.remove('selected'));
+        opt.classList.add('selected');
+        formData[key] = opt.dataset.val;
+      });
+    });
+  });
+
+  // ── TEXT INPUTS ──
+  ['projectName','keyMessage','callToAction','audience','industry',
+   'styleRefs','launchDate','fullName','company','email','additionalNotes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => { formData[id] = el.value.trim(); });
+  });
+
+  // ── NAVIGATION ──
+  function updateUI() {
+    document.querySelectorAll('.step').forEach((s, i) => {
+      s.classList.toggle('active', i + 1 === currentStep);
+    });
+
+    const isReview   = currentStep === 7;
+    const isDone     = currentStep === 8;
+    const progress   = isDone ? 100 : ((currentStep - 1) / 6) * 100;
+
+    document.getElementById('progressFill').style.width = progress + '%';
+    document.getElementById('stepLabel').textContent =
+      isDone ? '' : `Step ${currentStep} of 7`;
+    document.getElementById('stepName').textContent =
+      isDone ? '' : stepMeta[currentStep].label;
+
+    const btnBack = document.getElementById('btnBack');
+    const btnNext = document.getElementById('btnNext');
+
+    btnBack.style.display = (currentStep > 1 && !isDone) ? 'inline-block' : 'none';
+    btnNext.style.display = isDone ? 'none' : 'inline-block';
+
+    if (isReview) {
+      btnNext.textContent = 'Download PDF';
+    } else {
+      btnNext.textContent = currentStep === 6 ? 'Review Brief →' : 'Next →';
+    }
+
+    if (isReview) buildSummary();
+  }
+
+  function validate() {
+    const clear = id => document.getElementById('field-' + id)?.classList.remove('has-error');
+    const flag  = id => { document.getElementById('field-' + id)?.classList.add('has-error'); return false; };
+    let ok = true;
+
+    if (currentStep === 1) {
+      clear('projectName');
+      if (!formData.projectName) ok = flag('projectName') || ok, ok = false;
+    }
+
+    if (currentStep === 2) {
+      clear('keyMessage');
+      if (!formData.keyMessage) { flag('keyMessage'); ok = false; }
+    }
+
+    if (currentStep === 3) {
+      clear('audience');
+      if (!formData.audience) { flag('audience'); ok = false; }
+    }
+
+    if (currentStep === 6) {
+      clear('fullName'); clear('email');
+      if (!formData.fullName) { flag('fullName'); ok = false; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email || '')) { flag('email'); ok = false; }
+    }
+
+    return ok;
+  }
+
+  function nextStep() {
+    if (currentStep === 7) { generatePDF(); return; }
+    if (!validate()) return;
+    currentStep++;
+    updateUI();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function prevStep() {
+    if (currentStep > 1) { currentStep--; updateUI(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  }
+
+  function restart() {
+    location.reload();
+  }
+
+  // ── SUMMARY ──
+  function buildSummary() {
+    const d = formData;
+    const fmt = v => Array.isArray(v) ? (v.length ? v.join(', ') : '—') : (v || '—');
+
+    const sections = [
+      { title: 'Project Basics', rows: [
+          ['Project Name', d.projectName],
+          ['Video Type',   d.videoType],
+          ['Length',       d.videoLength],
+      ]},
+      { title: 'Goals & Message', rows: [
+          ['Primary Goal',   d.primaryGoal],
+          ['Key Message',    d.keyMessage],
+          ['Call to Action', d.callToAction],
+      ]},
+      { title: 'Target Audience', rows: [
+          ['Audience',  d.audience],
+          ['Age Range', d.ageRange],
+          ['Industry',  d.industry],
+      ]},
+      { title: 'Style & Tone', rows: [
+          ['Animation Style',   d.animStyle],
+          ['Tone',             d.tone],
+          ['References',       d.styleRefs],
+          ['Brand Guidelines', d.brandGuidelines],
+      ]},
+      { title: 'Timeline & Budget', rows: [
+          ['Launch Date', d.launchDate],
+          ['Deadline',    d.deadlineFlexible],
+          ['Budget',      d.budget],
+      ]},
+      { title: 'Contact', rows: [
+          ['Name',    d.fullName],
+          ['Company', d.company],
+          ['Email',   d.email],
+          ['Notes',   d.additionalNotes],
+      ]},
+    ];
+
+    document.getElementById('summaryContent').innerHTML = sections.map(s => `
+      <div class="summary-section">
+        <div class="summary-section-title">${s.title}</div>
+        ${s.rows.map(([k, v]) => `
+          <div class="summary-row">
+            <span class="summary-key">${k}</span>
+            <span class="summary-val">${fmt(v)}</span>
+          </div>`).join('')}
+      </div>`).join('');
+  }
+
+  // ── PDF GENERATION ──
+  function generatePDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const d   = formData;
+    const W   = 210;
+    const M   = 22;
+    const CW  = W - M * 2;
+    let y     = 0;
+
+    const COL = {
+      bg:      [33,  33,  33],
+      surface: [27,  54,  67],
+      accent:  [0,  166, 105],
+      text:    [38,  38,  38],
+      muted:   [140, 140, 140],
+      light:   [250, 245, 245],
+    };
+
+    function newPage() {
+      doc.addPage();
+      y = M;
+    }
+
+    function check(h = 15) {
+      if (y + h > 276) newPage();
+    }
+
+    // Header band
+    doc.setFillColor(...COL.surface);
+    doc.rect(0, 0, W, 44, 'F');
+    doc.setFillColor(...COL.accent);
+    doc.rect(0, 0, 4, 44, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(...COL.light);
+    doc.text('BRAISED ANIMATION', M - 2, 17);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...COL.muted);
+    doc.text('PROJECT BRIEF · braisedanimation.com', M - 2, 25);
+
+    const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    doc.text(`Generated ${dateStr}`, W - M, 25, { align: 'right' });
+
+    y = 56;
+
+    // Project title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(22);
+    doc.setTextColor(...COL.surface);
+    doc.text(d.projectName || 'Untitled Project', M, y);
+    y += 8;
+
+    const sub = [d.videoType, d.videoLength].filter(Boolean).join('  ·  ');
+    if (sub) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(...COL.muted);
+      doc.text(sub, M, y);
+      y += 6;
+    }
+
+    doc.setDrawColor(...COL.accent);
+    doc.setLineWidth(0.4);
+    doc.line(M, y + 2, W - M, y + 2);
+    y += 14;
+
+    function section(title, rows) {
+      check(20);
+
+      doc.setFillColor(...COL.surface);
+      doc.roundedRect(M, y - 2, CW, 9, 1, 1, 'F');
+      doc.setFillColor(...COL.accent);
+      doc.rect(M, y - 2, 3, 9, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...COL.accent);
+      doc.text(title.toUpperCase(), M + 7, y + 4);
+      y += 15;
+
+      rows.forEach(([key, raw]) => {
+        const val = Array.isArray(raw) ? raw.join(', ') : (raw || '');
+        if (!val) return;
+
+        check(14);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...COL.muted);
+        doc.text(key.toUpperCase(), M, y);
+        y += 5;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(...COL.text);
+        const lines = doc.splitTextToSize(val, CW);
+        lines.forEach(line => {
+          check(6);
+          doc.text(line, M, y);
+          y += 5.5;
+        });
+        y += 4;
+      });
+
+      y += 4;
+    }
+
+    section('Goals & Message', [
+      ['Primary Goal',   d.primaryGoal],
+      ['Key Message',    d.keyMessage],
+      ['Call to Action', d.callToAction],
+    ]);
+
+    section('Target Audience', [
+      ['Audience Description', d.audience],
+      ['Age Range',            d.ageRange],
+      ['Industry / Sector',    d.industry],
+    ]);
+
+    section('Style & Tone', [
+      ['Animation Style',   d.animStyle],
+      ['Tone',             d.tone],
+      ['Style References', d.styleRefs],
+      ['Brand Guidelines', d.brandGuidelines],
+    ]);
+
+    section('Timeline & Budget', [
+      ['Target Launch Date',   d.launchDate],
+      ['Deadline Flexibility', d.deadlineFlexible],
+      ['Budget Range',         d.budget],
+    ]);
+
+    section('Contact Information', [
+      ['Name',             d.fullName],
+      ['Company / Brand',  d.company],
+      ['Email',            d.email],
+      ['Additional Notes', d.additionalNotes],
+    ]);
+
+    // Footer on every page
+    const pages = doc.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFillColor(...COL.surface);
+      doc.rect(0, 286, W, 11, 'F');
+      doc.setDrawColor(...COL.accent);
+      doc.setLineWidth(0.3);
+      doc.line(0, 286, W, 286);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(...COL.muted);
+      doc.text('BRAISED ANIMATION · braisedanimation.com', M, 292);
+      doc.text(`${p} / ${pages}`, W - M, 292, { align: 'right' });
+    }
+
+    const filename = `Braised-Brief_${(d.projectName || 'Project').replace(/\s+/g, '-')}_${new Date().getFullYear()}.pdf`;
+    doc.save(filename);
+
+    currentStep = 8;
+    updateUI();
+  }
+
+  // Init
+  updateUI();
+</script>
+</body>
+</html>
