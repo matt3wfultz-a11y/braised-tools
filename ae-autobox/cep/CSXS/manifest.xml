@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ExtensionManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   ExtensionBundleId="com.braised.autobox"
+                   ExtensionBundleName="AutoBox"
+                   ExtensionBundleVersion="1.0.0"
+                   Version="7.0">
+  <ExtensionList>
+    <Extension Id="com.braised.autobox.panel" Version="1.0.0" />
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <!-- After Effects 2020 (17.0) and newer -->
+      <Host Name="AEFT" Version="[17.0,99.9]" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.braised.autobox.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>AutoBox</Menu>
+          <Geometry>
+            <Size>
+              <Height>640</Height>
+              <Width>300</Width>
+            </Size>
+            <MinSize>
+              <Height>240</Height>
+              <Width>230</Width>
+            </MinSize>
+            <MaxSize>
+              <Height>2000</Height>
+              <Width>800</Width>
+            </MaxSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

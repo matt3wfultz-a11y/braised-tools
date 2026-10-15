@@ -1,0 +1,179 @@
+/* AutoBox panel. Colors follow After Effects' UI brightness (see panel.js). */
+:root {
+  --bg: #232323;
+  --text: #d4d4d4;
+  --muted: #8e8e8e;
+  --field: #1a1a1a;
+  --field-hover: #151515;
+  --line: #3b3b3b;
+  --button: #333333;
+  --button-hover: #3d3d3d;
+  --accent: #00a669;
+  --accent-hover: #00bf77;
+  --on-accent: #ffffff;
+  --error: #ff7a6b;
+}
+
+:root.light {
+  --text: #1f1f1f;
+  --muted: #555555;
+  --field: #f2f2f2;
+  --field-hover: #ffffff;
+  --line: #9a9a9a;
+  --button: #d6d6d6;
+  --button-hover: #e2e2e2;
+  --accent: #008a57;
+  --accent-hover: #00a669;
+  --error: #b3261e;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.35 -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.panel { padding: 10px 10px 14px; min-width: 210px; }
+
+.group {
+  border-top: 1px solid var(--line);
+  padding: 8px 0 4px;
+}
+.group + .group { margin-top: 6px; }
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  margin-bottom: 6px;
+}
+.field > * + * { margin-left: 6px; }
+
+.label {
+  flex: 0 0 56px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.label.inline { flex: 0 0 auto; margin-left: 12px; }
+
+.mini { color: var(--muted); min-width: 10px; text-align: center; }
+
+.scrub { cursor: ew-resize; -webkit-user-select: none; user-select: none; }
+
+.unit, .hint { color: var(--muted); }
+
+input[type="number"], select {
+  height: 22px;
+  min-width: 0;
+  padding: 0 6px;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font: inherit;
+}
+input[type="number"] { width: 52px; }
+input[type="number"]:hover, select:hover { background: var(--field-hover); }
+input[type="number"]:focus, select:focus { outline: none; border-color: var(--accent); }
+input[type="number"]::-webkit-inner-spin-button { opacity: 0.35; }
+select { flex: 1 1 auto; max-width: 160px; }
+
+.quad { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
+.quad input { width: 38px; flex: 1 1 38px; }
+.quad label + input { margin-left: 3px; }
+.quad input + label { margin-left: 6px; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--button);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  min-height: 24px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+button:hover { background: var(--button-hover); }
+button:focus { outline: none; border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.seg { display: flex; flex: 1 1 auto; min-width: 0; }
+.seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seg button + button { border-left-width: 0; }
+.seg button:first-child { border-radius: 3px 0 0 3px; }
+.seg button:last-child { border-radius: 0 3px 3px 0; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.anchor {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  grid-gap: 3px;
+}
+.anchor button {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 2px;
+  background: var(--field);
+}
+.anchor button.on { background: var(--accent); border-color: var(--accent); }
+
+.swatch {
+  flex: 0 0 34px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+}
+
+.check { display: flex; align-items: center; margin: 2px 0 6px; cursor: pointer; }
+.check input { margin: 0 6px 0 0; accent-color: var(--accent); }
+
+.is-free .stack-only { opacity: 0.45; }
+
+.actions { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
+.actions > * + * { margin-top: 6px; }
+.actions button { width: 100%; }
+.pair { display: flex; }
+.pair button { flex: 1 1 0; min-width: 0; }
+.pair button + button { margin-left: 6px; }
+
+.primary {
+  min-height: 30px;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.status { min-height: 16px; margin: 8px 0 0; color: var(--muted); }
+.status.error { color: var(--error); }
+
+.help { margin-top: 8px; color: var(--muted); }
+.help summary { cursor: pointer; color: var(--text); }
+.help p { margin: 6px 0 0; }
+.help strong { color: var(--text); font-weight: 600; }
+
+footer { margin-top: 12px; color: var(--muted); font-size: 10px; text-align: center; }

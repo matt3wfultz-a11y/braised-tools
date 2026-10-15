@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AutoBox</title>
+  <link rel="stylesheet" href="css/panel.css">
+</head>
+<body class="is-free">
+  <main class="panel">
+    <section class="group" aria-labelledby="h-layout">
+      <h2 id="h-layout">Layout</h2>
+
+      <div class="field">
+        <span class="label">Mode</span>
+        <div class="seg" data-key="layout" role="radiogroup" aria-label="Layout mode">
+          <button type="button" role="radio" data-value="1" title="Layers stay where they are and the box wraps around them">Free</button>
+          <button type="button" role="radio" data-value="2" title="Stack layers top to bottom, in timeline order">Vertical</button>
+          <button type="button" role="radio" data-value="3" title="Stack layers left to right, in timeline order">Horizontal</button>
+        </div>
+      </div>
+
+      <div class="field stack-only">
+        <label class="label scrub" for="gap" title="Drag to adjust">Gap</label>
+        <input id="gap" type="number" data-key="gap" step="1" title="Space between stacked layers (px)">
+        <span class="unit">px</span>
+      </div>
+
+      <div class="field stack-only">
+        <span class="label">Align</span>
+        <div class="seg" data-key="align" role="radiogroup" aria-label="Align">
+          <button type="button" role="radio" data-value="1" title="Left in a vertical stack, top in a horizontal one">Start</button>
+          <button type="button" role="radio" data-value="2" title="Centered across the stack">Center</button>
+          <button type="button" role="radio" data-value="3" title="Right in a vertical stack, bottom in a horizontal one">End</button>
+        </div>
+      </div>
+
+      <div class="field stack-only">
+        <label class="label" for="justify">Justify</label>
+        <select id="justify" data-key="justify" title="Where the stack sits when the box is bigger than its contents (Min size)">
+          <option value="1">Start</option>
+          <option value="2">Center</option>
+          <option value="3">End</option>
+          <option value="4">Space Between</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <span class="label">Anchor</span>
+        <div class="anchor" data-key="anchor" role="radiogroup" aria-label="Box anchor" title="The point of the box that stays put while it grows or shrinks">
+          <button type="button" role="radio" data-value="1" aria-label="Top Left"></button>
+          <button type="button" role="radio" data-value="2" aria-label="Top"></button>
+          <button type="button" role="radio" data-value="3" aria-label="Top Right"></button>
+          <button type="button" role="radio" data-value="4" aria-label="Left"></button>
+          <button type="button" role="radio" data-value="5" aria-label="Center"></button>
+          <button type="button" role="radio" data-value="6" aria-label="Right"></button>
+          <button type="button" role="radio" data-value="7" aria-label="Bottom Left"></button>
+          <button type="button" role="radio" data-value="8" aria-label="Bottom"></button>
+          <button type="button" role="radio" data-value="9" aria-label="Bottom Right"></button>
+        </div>
+        <span class="hint" id="anchor-name">Top Left</span>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="h-box">
+      <h2 id="h-box">Box</h2>
+
+      <div class="field">
+        <label class="label scrub" for="padding" title="Drag to adjust">Padding</label>
+        <input id="padding" type="number" data-key="padding" step="1" title="Space between the layers and the edge of the box (px)">
+        <label class="label scrub inline" for="radius" title="Drag to adjust">Radius</label>
+        <input id="radius" type="number" data-key="radius" min="0" step="1" title="Corner radius (px)">
+      </div>
+
+      <div class="field">
+        <span class="label">Extra</span>
+        <div class="quad" title="Extra padding per side (px), added to Padding">
+          <label class="mini scrub" for="extraTop">T</label><input id="extraTop" type="number" data-key="extraTop" step="1">
+          <label class="mini scrub" for="extraRight">R</label><input id="extraRight" type="number" data-key="extraRight" step="1">
+          <label class="mini scrub" for="extraBottom">B</label><input id="extraBottom" type="number" data-key="extraBottom" step="1">
+          <label class="mini scrub" for="extraLeft">L</label><input id="extraLeft" type="number" data-key="extraLeft" step="1">
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">Min size</span>
+        <label class="mini scrub" for="minWidth">W</label>
+        <input id="minWidth" type="number" data-key="minWidth" min="0" step="1" title="Minimum width (px), 0 = fit contents">
+        <label class="mini scrub" for="minHeight">H</label>
+        <input id="minHeight" type="number" data-key="minHeight" min="0" step="1" title="Minimum height (px), 0 = fit contents">
+      </div>
+
+      <div class="field">
+        <span class="label">Fill</span>
+        <button type="button" class="swatch" data-key="fillColor" aria-label="Fill color" title="Fill color"></button>
+        <input id="fillOpacity" type="number" data-key="fillOpacity" min="0" max="100" step="1" title="Fill opacity">
+        <span class="unit">%</span>
+      </div>
+
+      <div class="field">
+        <span class="label">Stroke</span>
+        <button type="button" class="swatch" data-key="strokeColor" aria-label="Stroke color" title="Stroke color"></button>
+        <input id="strokeWidth" type="number" data-key="strokeWidth" min="0" step="1" title="Stroke width, 0 = no stroke">
+        <span class="unit">px</span>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" data-key="ignoreHidden">
+        <span>Ignore hidden layers</span>
+      </label>
+    </section>
+
+    <div class="actions">
+      <button type="button" class="primary" data-action="create" title="Put a box behind the selected layers">Create Box</button>
+      <div class="pair">
+        <button type="button" data-action="add" title="Select a box and other layers to add them to it">Add to Box</button>
+        <button type="button" data-action="remove" title="Take the selected layers out of their box">Remove</button>
+      </div>
+      <div class="pair">
+        <button type="button" data-action="apply" title="Push these settings to the selected box(es)">Apply to Box</button>
+        <button type="button" data-action="select" title="Select every layer in the selected box(es)">Select Members</button>
+      </div>
+      <div class="pair">
+        <button type="button" data-action="release" title="Bake the layout and remove the AutoBox rig from the selected box(es)">Release</button>
+        <button type="button" data-action="reset" title="Restore the default panel settings">Reset</button>
+      </div>
+    </div>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+
+    <details class="help">
+      <summary>How it works</summary>
+      <p><strong>Create Box</strong> adds a shape layer behind the selected layers, sized to fit with padding and rounded corners. The layers are parented to it, so moving, scaling or rotating the box moves the group.</p>
+      <p><strong>Free</strong> keeps layers where they are and wraps the box around them. <strong>Vertical</strong> and <strong>Horizontal</strong> stack them in timeline order with the gap between. Reorder layers in the timeline to reorder the stack.</p>
+      <p>Everything updates live as text changes, layers scale or animate. Every setting is on the box layer's <strong>Effect Controls</strong>, where it can be keyframed. These panel values are the defaults for new boxes; <strong>Apply to Box</strong> pushes them to selected boxes.</p>
+      <p><strong>Release</strong> bakes the current layout into plain values and keyframes and removes the rig. Boxes can be nested by putting one box inside another.</p>
+    </details>
+
+    <footer>AutoBox <span id="version">1.0.0</span> · Braised Tools</footer>
+  </main>
+  <script src="js/panel.js"></script>
+</body>
+</html>
