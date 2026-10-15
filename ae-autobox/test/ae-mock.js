@@ -28,13 +28,37 @@ function lerp(a, b, f) {
 const evalStack = [];
 let nextId = 1;
 
-function runExpression(code, thisLayer, thisComp, time, value) {
+function runExpression(code, thisLayer, thisComp, thisProperty, time, value) {
   const effect = (n) => thisLayer.effect(n);
   // Direct eval returns the completion value of the last statement, which is
   // how After Effects picks an expression's result.
-  return (function (thisLayer, thisComp, time, value, effect) {
+  return (function (thisLayer, thisComp, thisProperty, time, value, effect) {
     return eval(code);
-  })(thisLayer, thisComp, time, value, effect);
+  })(thisLayer, thisComp, thisProperty, time, value, effect);
+}
+
+// An expression-side property or group: call it with a name, match name or
+// 1-based index to reach a child; .value reads it at the evaluation time.
+function exprProp(state, t) {
+  const f = (key) => {
+    const c = typeof key === 'number' ? state.children[key - 1] : state.children.find((ch) => ch.name === key || ch.matchName === key);
+    if (!c) throw new Error(`Property "${key}" is missing in ${state.name}`);
+    return exprProp(c, t);
+  };
+  Object.defineProperty(f, 'value', { get: () => new Prop(state).valueAtTime(t, false) });
+  f.propertyGroup = (n = 1) => {
+    let s = state;
+    for (let i = 0; i < n; i++) s = s.parent;
+    return exprProp(s, t);
+  };
+  // Shape groups: content(nameOrIndex) reaches into the group's Contents.
+  if (state.matchName === 'ADBE Vector Group') f.content = (key) => f('ADBE Vectors Group')(key);
+  if (state.matchName === 'ADBE Vector Shape - Rect') {
+    ['size', 'position', 'roundness'].forEach((attr, i) => {
+      Object.defineProperty(f, attr, { get: () => exprProp(state.children[i], t) });
+    });
+  }
+  return f;
 }
 
 function evaluate(state, t, base) {
@@ -46,7 +70,7 @@ function evaluate(state, t, base) {
   try {
     const layer = state.layer;
     const exprValue = state.exprDims && Array.isArray(base) ? base.slice(0, state.exprDims) : base;
-    let out = runExpression(state.expression, new ExprLayer(layer, t), new ExprComp(layer.comp, t), t, exprValue);
+    let out = runExpression(state.expression, new ExprLayer(layer, t), new ExprComp(layer.comp, t), exprProp(state, t), t, exprValue);
     if (typeof out === 'boolean') out = out ? 1 : 0;
     if (Array.isArray(out)) {
       out = Array.from(out);
@@ -72,6 +96,7 @@ class ExprComp {
     this._c = comp;
     this._t = t;
   }
+  get numLayers() { return this._c._layers.length; }
   layer(key) {
     const l = typeof key === 'number' ? this._c._layers[key - 1] : this._c._layers.find((x) => x.name === key);
     if (!l) throw new Error(`Layer "${key}" is missing or does not exist`);
@@ -95,17 +120,36 @@ class ExprLayer {
     const l = this._l;
     return l.enabled && this._t >= l.inPoint && this._t < l.outPoint;
   }
+  // Cameras and lights have a video switch too, so hasVideo doesn't filter them out.
+  get hasVideo() { return this._l instanceof CameraLayer ? true : this._l.hasVideo; }
+  get text() {
+    if (!(this._l instanceof TextLayer)) return undefined;
+    return { sourceText: this._l.sourceText };
+  }
   get transform() {
     const l = this._l, t = this._t;
+    if (l instanceof CameraLayer) {
+      const missing = () => { throw new Error('Camera has no anchorPoint/scale'); };
+      return { get anchorPoint() { return missing(); }, get scale() { return missing(); },
+        position: { get value() { return l.positionAt(t); } }, rotation: { value: 0 } };
+    }
     const two = (mn) => ({ get value() { return l.tprop(mn).valueAtTime(t, false).slice(0, 2); } });
     return {
       anchorPoint: two('ADBE Anchor Point'),
       scale: two('ADBE Scale'),
       position: { get value() { return l.positionAt(t); } },
       rotation: { get value() { return l.tprop('ADBE Rotate Z').valueAtTime(t, false); } },
+      opacity: { get value() { return l.tprop('ADBE Opacity').valueAtTime(t, false); } },
     };
   }
-  sourceRectAtTime(t = this._t, ext = false) { return this._l.sourceRectAtTime(t, ext); }
+  content(key) {
+    if (!(this._l instanceof ShapeLayer)) throw new Error(`${this._l.name} has no content()`);
+    return exprProp(this._l.contentsState, this._t)(key);
+  }
+  sourceRectAtTime(t = this._t, ext = false) {
+    if (this._l instanceof CameraLayer) throw new Error('Camera has no sourceRectAtTime');
+    return this._l.sourceRectAtTime(t, ext);
+  }
   toComp(p) { return this._l.toCompAt(this._t, p); }
   fromComp(p) { return this._l.fromCompAt(this._t, p); }
   effect(name) {
@@ -135,6 +179,15 @@ class PState {
     setLayer(child, this.layer);
     return child;
   }
+}
+
+function cloneState(state, parent, layer) {
+  const c = new PState(Object.assign({}, state, { id: nextId++, parent, layer, children: [], gen: 0 }));
+  c.value = clone(state.value);
+  c.keys = state.keys.map((k) => ({ t: k.t, v: clone(k.v) }));
+  c.items = state.items ? state.items.slice() : null;
+  c.children = state.children.map((ch) => cloneState(ch, c, layer));
+  return c;
 }
 
 function setLayer(state, layer) {
@@ -203,10 +256,19 @@ class Prop {
     s.parent.gen++;
     s.removed = true;
   }
-  get canSetExpression() { return !this._c().group; }
+  // Like After Effects, moving an item invalidates references to its siblings.
+  moveTo(index) {
+    const s = this._c(), list = s.parent.children;
+    if (index < 1 || index > list.length) throw new Error(`moveTo(${index}) out of range`);
+    list.splice(list.indexOf(s), 1);
+    list.splice(index - 1, 0, s);
+    s.parent.gen++;
+  }
+  get canSetExpression() { return !this._c().group && !this._c().noValue; }
   get expression() { return this._c().expression; }
   set expression(v) {
     const s = this._c();
+    if (s.noValue) throw new Error(`${s.name} can't have an expression`);
     s.expression = String(v);
     s.expressionError = '';
   }
@@ -218,12 +280,14 @@ class Prop {
   get value() { return this.valueAtTime(this._c().layer.comp.time, false); }
   valueAtTime(t, pre) {
     const s = this._c();
+    if (s.noValue) throw new Error(`${s.name} has no value scripts can read`);
     const base = staticAt(s, t);
     if (pre || !s.expression || !s.expressionEnabled) return base;
     return evaluate(s, t, base);
   }
   _check(v) {
     const s = this._c();
+    if (s.noValue) throw new Error(`${s.name} has no value that scripts can set`);
     if (Array.isArray(s.value) !== Array.isArray(v)) throw new Error(`Bad value for ${s.name}: ${JSON.stringify(v)}`);
     if (s.items && (v < 1 || v > s.items.length || v !== Math.round(v))) throw new Error(`Menu value ${v} out of range`);
     if (Array.isArray(v)) {
@@ -301,6 +365,8 @@ const FACTORIES = {
   'ADBE Slider Control': effect('Slider Control', 'ADBE Slider Control', 'Slider', 0),
   'ADBE Checkbox Control': effect('Checkbox Control', 'ADBE Checkbox Control', 'Checkbox', 0),
   'ADBE Color Control': effect('Color Control', 'ADBE Color Control', 'Color', [1, 0, 0, 1]),
+  'ADBE Point Control': effect('Point Control', 'ADBE Point Control', 'Point', [0, 0]),
+  'ADBE Angle Control': effect('Angle Control', 'ADBE Angle Control', 'Angle', 0),
   'ADBE Dropdown Control': effect('Dropdown Menu Control', 'ADBE Dropdown Control', 'Menu', 1, { items: ['Item 1', 'Item 2', 'Item 3'] }),
   'ADBE Vector Group': () => group('Group 1', 'ADBE Vector Group', [
     group('Contents', 'ADBE Vectors Group'),
@@ -314,6 +380,31 @@ const FACTORIES = {
   'ADBE Vector Graphic - Fill': () => group('Fill 1', 'ADBE Vector Graphic - Fill', [
     prop('Color', 'ADBE Vector Fill Color', [1, 0, 0, 1]),
     prop('Opacity', 'ADBE Vector Fill Opacity', 100),
+  ]),
+  // Gradient colors aren't readable or settable from scripts (NO_VALUE).
+  'ADBE Vector Graphic - G-Fill': () => group('Gradient Fill 1', 'ADBE Vector Graphic - G-Fill', [
+    prop('Type', 'ADBE Vector Grad Type', 1),
+    prop('Start Point', 'ADBE Vector Grad Start Pt', [0, 0], { spatial: true }),
+    prop('End Point', 'ADBE Vector Grad End Pt', [100, 0], { spatial: true }),
+    prop('Highlight Length', 'ADBE Vector Grad HiLite Length', 0),
+    prop('Highlight Angle', 'ADBE Vector Grad HiLite Angle', 0),
+    prop('Colors', 'ADBE Vector Grad Colors', null, { noValue: true }),
+    prop('Opacity', 'ADBE Vector Fill Opacity', 100),
+  ]),
+  'ADBE Vector Graphic - G-Stroke': () => group('Gradient Stroke 1', 'ADBE Vector Graphic - G-Stroke', [
+    prop('Type', 'ADBE Vector Grad Type', 1),
+    prop('Start Point', 'ADBE Vector Grad Start Pt', [0, 0], { spatial: true }),
+    prop('End Point', 'ADBE Vector Grad End Pt', [100, 0], { spatial: true }),
+    prop('Highlight Length', 'ADBE Vector Grad HiLite Length', 0),
+    prop('Highlight Angle', 'ADBE Vector Grad HiLite Angle', 0),
+    prop('Colors', 'ADBE Vector Grad Colors', null, { noValue: true }),
+    prop('Opacity', 'ADBE Vector Stroke Opacity', 100),
+    prop('Stroke Width', 'ADBE Vector Stroke Width', 2),
+  ]),
+  'ADBE Tint': () => group('Tint', 'ADBE Tint', [
+    prop('Map Black To', 'ADBE Tint-0001', [0, 0, 0, 1]),
+    prop('Map White To', 'ADBE Tint-0002', [1, 1, 1, 1]),
+    prop('Amount to Tint', 'ADBE Tint-0003', 100),
   ]),
   'ADBE Vector Graphic - Stroke': () => group('Stroke 1', 'ADBE Vector Graphic - Stroke', [
     prop('Color', 'ADBE Vector Stroke Color', [1, 1, 1, 1]),
@@ -345,6 +436,8 @@ class Layer {
     this.adjustmentLayer = !!o.adjustmentLayer;
     this.selected = false;
     this.comment = '';
+    this.label = 0;
+    this.motionBlur = false;
     this._parent = null;
     this.rect = o.rect || { left: 0, top: 0, width: 100, height: 100 };
     const p = o.position || [0, 0];
@@ -458,6 +551,11 @@ class Layer {
     list.splice(list.indexOf(this), 1);
     list.splice(list.indexOf(other) + 1, 0, this);
   }
+  moveBefore(other) {
+    const list = this.comp._layers;
+    list.splice(list.indexOf(this), 1);
+    list.splice(list.indexOf(other), 0, this);
+  }
   moveToBeginning() {
     const list = this.comp._layers;
     list.splice(list.indexOf(this), 1);
@@ -466,6 +564,19 @@ class Layer {
   remove() {
     this.comp._layers.forEach((l) => { if (l._parent === this) l.parent = null; });
     this.comp._layers.splice(this.comp._layers.indexOf(this), 1);
+  }
+  // Like Edit > Duplicate: the copy lands directly above the original.
+  duplicate() {
+    const copy = Object.create(Object.getPrototypeOf(this));
+    Object.assign(copy, this);
+    copy.root = cloneState(this.root, null, copy);
+    copy.root.layer = copy;
+    copy.effectsState = copy.root.children.find((c) => c.matchName === 'ADBE Effect Parade');
+    if (this.contentsState) copy.contentsState = copy.root.children.find((c) => c.matchName === 'ADBE Root Vectors Group');
+    copy.selected = false;
+    const list = this.comp._layers;
+    list.splice(list.indexOf(this), 0, copy);
+    return copy;
   }
   sourceRectAtTime(t, ext) {
     const r = typeof this.rect === 'function' ? this.rect(t) : this.rect;
@@ -492,7 +603,19 @@ class Layer {
 }
 
 class AVLayer extends Layer {}
-class TextLayer extends AVLayer {}
+// Like After Effects, a text layer that was never renamed is named after
+// its text, and its name changes whenever the text does.
+class TextLayer extends AVLayer {
+  constructor(comp, o) {
+    super(comp, o);
+    this.sourceText = o.text !== undefined ? o.text : (o.name || '');
+  }
+  get name() { return this.isNameSet ? this._name : String(this.sourceText).split(/[\r\n]/)[0]; }
+  set name(v) {
+    this._name = String(v);
+    this.isNameSet = true;
+  }
+}
 class CameraLayer extends Layer {
   constructor(comp, o) {
     super(comp, o);
@@ -523,12 +646,11 @@ class ShapeLayer extends AVLayer {
       const pos = new Prop(rs.children[1]).valueAtTime(t, false);
       let grow = 0;
       if (ext) {
-        const stroke = rs.parent.children.find((c) => c.matchName === 'ADBE Vector Graphic - Stroke');
-        if (stroke) {
-          const w = new Prop(stroke.children[2]).valueAtTime(t, false);
-          const o = new Prop(stroke.children[1]).valueAtTime(t, false);
-          if (o > 0) grow = w / 2;
-        }
+        rs.parent.children.forEach((c) => {
+          if (c.matchName !== 'ADBE Vector Graphic - Stroke' && c.matchName !== 'ADBE Vector Graphic - G-Stroke') return;
+          const get = (mn) => new Prop(c.children.find((x) => x.matchName === mn)).valueAtTime(t, false);
+          if (get('ADBE Vector Stroke Opacity') > 0) grow = Math.max(grow, get('ADBE Vector Stroke Width') / 2);
+        });
       }
       l = Math.min(l, pos[0] - size[0] / 2 - grow);
       r = Math.max(r, pos[0] + size[0] / 2 + grow);
@@ -539,6 +661,7 @@ class ShapeLayer extends AVLayer {
   }
   boxRect(t = this.comp.time) {
     const rs = this.rectShapes()[0];
+    if (!rs) throw new Error(`${this.name} has no rect`);
     const size = new Prop(rs.children[0]).valueAtTime(t, false);
     const pos = new Prop(rs.children[1]).valueAtTime(t, false);
     return { l: pos[0] - size[0] / 2, t: pos[1] - size[1] / 2, r: pos[0] + size[0] / 2, b: pos[1] + size[1] / 2,

@@ -3,7 +3,11 @@
  *
  * Loads AutoBox.jsx into After Effects with $.evalFile and drives it through
  * CEP's evalScript bridge, so this panel and the ScriptUI panel share the
- * same layout engine. Panel settings are kept in localStorage.
+ * same engine. Settings and twirl states are kept in localStorage.
+ *
+ * Controls follow After Effects: blue "hot text" numbers you drag left/right
+ * (Shift = x10, Ctrl/Cmd = x0.1) or click to type, sliders you twirl open,
+ * angle dials, color swatches and two-stop gradient bars.
  *
  * Plain ES5: After Effects 2020 runs CEP panels on Chromium 61.
  */
@@ -11,7 +15,9 @@
   'use strict';
 
   var STORAGE_KEY = 'braised.autobox.settings';
+  var TWIRL_KEY = 'braised.autobox.twirls';
   var ANCHORS = ['Top Left', 'Top', 'Top Right', 'Left', 'Center', 'Right', 'Bottom Left', 'Bottom', 'Bottom Right'];
+  var DRAG_THRESHOLD = 3;
 
   // Keep in sync with DEFAULTS in AutoBox.jsx (checked by the test suite).
   var DEFAULTS = {
@@ -28,15 +34,31 @@
     radius: 16,
     minWidth: 0,
     minHeight: 0,
+    fillType: 1,
     fillColor: [27 / 255, 54 / 255, 67 / 255],
+    fillColor2: [0, 166 / 255, 105 / 255],
+    fillAngle: 90,
     fillOpacity: 100,
-    strokeWidth: 0,
+    strokeType: 1,
     strokeColor: [0, 166 / 255, 105 / 255],
+    strokeColor2: [1, 1, 1],
+    strokeAngle: 90,
+    strokeWidth: 0,
+    strokeOpacity: 100,
     ignoreHidden: 1
+  };
+
+  // Which settings each section's Reset restores.
+  var GROUPS = {
+    layout: ['layout', 'gap', 'align', 'justify', 'anchor'],
+    box: ['padding', 'extraTop', 'extraRight', 'extraBottom', 'extraLeft', 'radius', 'minWidth', 'minHeight', 'ignoreHidden'],
+    fill: ['fillType', 'fillColor', 'fillColor2', 'fillAngle', 'fillOpacity'],
+    stroke: ['strokeType', 'strokeColor', 'strokeColor2', 'strokeAngle', 'strokeWidth', 'strokeOpacity']
   };
 
   var cep = window.__adobe_cep__;
   var settings = load();
+  var twirls = loadTwirls();
   var hostReady = false;
   var busy = false;
 
@@ -50,7 +72,10 @@
       var saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || '{}');
       Object.keys(DEFAULTS).forEach(function (k) {
         var v = saved[k];
-        if (Array.isArray(DEFAULTS[k]) ? Array.isArray(v) && v.length === DEFAULTS[k].length : typeof v === 'number') s[k] = v;
+        var ok = Array.isArray(DEFAULTS[k]) ?
+          Array.isArray(v) && v.length === DEFAULTS[k].length && v.every(isFinite) :
+          typeof v === 'number' && isFinite(v);
+        if (ok) s[k] = v;
       });
     } catch (e) {}
     return s;
@@ -62,18 +87,62 @@
     } catch (e) {}
   }
 
-  function each(selector, fn) {
-    Array.prototype.forEach.call(document.querySelectorAll(selector), fn);
+  function loadTwirls() {
+    try {
+      return JSON.parse(window.localStorage.getItem(TWIRL_KEY) || '{}') || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveTwirls() {
+    try {
+      window.localStorage.setItem(TWIRL_KEY, JSON.stringify(twirls));
+    } catch (e) {}
+  }
+
+  function $(selector, root) {
+    return (root || document).querySelector(selector);
+  }
+
+  function each(selector, fn, root) {
+    Array.prototype.forEach.call((root || document).querySelectorAll(selector), fn);
   }
 
   function setStatus(message, kind) {
-    var el = document.getElementById('status');
+    var el = $('#status');
     el.textContent = message || '';
     el.className = 'status' + (kind ? ' ' + kind : '');
   }
 
   function toCss(c) {
     return 'rgb(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' + Math.round(c[2] * 255) + ')';
+  }
+
+  function num(el, attr, fallback) {
+    var v = parseFloat(el.getAttribute(attr));
+    return isNaN(v) ? fallback : v;
+  }
+
+  function clampFor(el, v) {
+    return Math.min(num(el, 'data-max', Infinity), Math.max(num(el, 'data-min', -Infinity), v));
+  }
+
+  function round(v, decimals) {
+    var f = Math.pow(10, decimals);
+    return Math.round(v * f) / f;
+  }
+
+  // After Effects shows angles as revolutions + degrees: "0x+90.0°".
+  function formatAngle(v) {
+    var turns = v < 0 ? Math.ceil(v / 360) : Math.floor(v / 360);
+    var deg = v - turns * 360;
+    return turns + 'x' + (deg < 0 ? '' : '+') + deg.toFixed(1) + '\u00b0';
+  }
+
+  function formatValue(el, v) {
+    if (el.getAttribute('data-format') === 'angle') return formatAngle(v);
+    return String(round(v, num(el, 'data-decimals', 0)));
   }
 
   // ---------------------------------------------------------------------
@@ -98,7 +167,7 @@
 
   function loadHost(done) {
     if (!cep) {
-      setStatus('Open this panel inside After Effects: Window › Extensions › AutoBox.', 'error');
+      setStatus('Open this panel inside After Effects: Window \u203a Extensions \u203a AutoBox.', 'error');
       return;
     }
     var file = extensionPath() + '/jsx/AutoBox.jsx';
@@ -125,7 +194,7 @@
       return;
     }
     busy = true;
-    setStatus('Working…');
+    setStatus('Working\u2026');
     evalHost('$.global.AutoBoxHost.run(' + JSON.stringify(action) + ', ' + JSON.stringify(settings) + ')', function (result) {
       busy = false;
       if (result === 'ok') setStatus('');
@@ -144,7 +213,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Controls
+  // State
   // ---------------------------------------------------------------------
   function set(key, value) {
     settings[key] = value;
@@ -152,109 +221,412 @@
     render();
   }
 
-  function clampTo(input, v) {
-    var min = parseFloat(input.getAttribute('min'));
-    var max = parseFloat(input.getAttribute('max'));
-    if (!isNaN(min)) v = Math.max(min, v);
-    if (!isNaN(max)) v = Math.min(max, v);
-    return v;
+  function setMany(values) {
+    Object.keys(values).forEach(function (k) { settings[k] = values[k]; });
+    save();
+    render();
+  }
+
+  // Element visibility: data-show="fillType:2,3" shows it only for those values.
+  function shown(el) {
+    var rule = el.getAttribute('data-show');
+    if (!rule) return true;
+    var parts = rule.split(':');
+    return parts[1].split(',').map(Number).indexOf(settings[parts[0]]) >= 0;
   }
 
   function render() {
-    each('[data-key]', function (el) {
-      var key = el.getAttribute('data-key');
-      var v = settings[key];
-      if (el.classList.contains('seg') || el.classList.contains('anchor')) {
-        Array.prototype.forEach.call(el.querySelectorAll('button'), function (b) {
-          var on = parseInt(b.getAttribute('data-value'), 10) === v;
-          b.classList.toggle('on', on);
-          b.setAttribute('aria-checked', on ? 'true' : 'false');
-        });
-      } else if (el.classList.contains('swatch')) {
-        el.style.background = toCss(v);
-      } else if (el.type === 'checkbox') {
-        el.checked = v > 0;
-      } else if (document.activeElement !== el) {
-        el.value = String(v);
-      }
+    each('[data-show]', function (el) {
+      el.hidden = !shown(el);
+    });
+    each('.hot[data-key]', function (el) {
+      if (el.classList.contains('editing')) return;
+      el.textContent = formatValue(el, settings[el.getAttribute('data-key')]);
+      el.setAttribute('aria-valuenow', String(settings[el.getAttribute('data-key')]));
+    });
+    each('.slider[data-key]', function (el) {
+      var v = settings[el.getAttribute('data-key')];
+      var lo = num(el, 'data-smin', 0), hi = num(el, 'data-smax', 100);
+      var f = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+      $('.thumb', el).style.left = (f * 100) + '%';
+      $('.fill', el).style.width = (f * 100) + '%';
+    });
+    each('.dial[data-key]', function (el) {
+      // 0° points up and angles turn clockwise, like After Effects.
+      $('.hand', el).style.transform = 'rotate(' + settings[el.getAttribute('data-key')] + 'deg)';
+    });
+    each('.seg[data-key], .anchor[data-key]', function (el) {
+      var v = settings[el.getAttribute('data-key')];
+      each('button', function (b) {
+        var on = parseInt(b.getAttribute('data-value'), 10) === v;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      }, el);
+    });
+    each('select[data-key]', function (el) {
+      el.value = String(settings[el.getAttribute('data-key')]);
+    });
+    each('.swatch[data-key]', function (el) {
+      el.style.backgroundColor = toCss(settings[el.getAttribute('data-key')]);
+    });
+    each('.gradient[data-from]', function (el) {
+      var a = toCss(settings[el.getAttribute('data-from')]);
+      var b = toCss(settings[el.getAttribute('data-to')]);
+      var radial = settings[el.getAttribute('data-type')] === 3;
+      $('.ramp', el).style.backgroundImage = radial ?
+        'radial-gradient(circle at 0 50%, ' + a + ', ' + b + ')' :
+        'linear-gradient(to right, ' + a + ', ' + b + ')';
+    });
+    each('input[type="checkbox"][data-key]', function (el) {
+      el.checked = settings[el.getAttribute('data-key')] > 0;
+    });
+    each('[data-twirl]', function (el) {
+      var open = twirls[el.getAttribute('data-twirl')];
+      if (open === undefined) open = el.getAttribute('data-open') !== 'false';
+      el.classList.toggle('open', open);
+      var t = $('.twirl', el);
+      if (t) t.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     document.body.classList.toggle('is-free', settings.layout === 1);
-    document.getElementById('anchor-name').textContent = ANCHORS[settings.anchor - 1] || '';
+    document.body.classList.toggle('is-horizontal', settings.layout === 3);
+    $('#layout-name').textContent = ['Free', 'Vertical', 'Horizontal'][settings.layout - 1] || '';
+    $('#anchor-name').textContent = ANCHORS[settings.anchor - 1] || '';
   }
 
-  function bindControls() {
-    each('[data-key]', function (el) {
+  // Not inside something hidden or a closed twirl-down.
+  function isVisible(el) {
+    for (var p = el; p && p !== document.body; p = p.parentElement) {
+      if (p.hidden) return false;
+      if (p.classList.contains('body') && p.parentElement.hasAttribute('data-twirl') &&
+          !p.parentElement.classList.contains('open')) return false;
+    }
+    return true;
+  }
+
+  // ---------------------------------------------------------------------
+  // Hot text: drag to scrub, click to type, arrows to nudge
+  // ---------------------------------------------------------------------
+  function scrubMultiplier(e) {
+    if (e.shiftKey) return 10;
+    if (e.ctrlKey || e.metaKey) return 0.1;
+    return 1;
+  }
+
+  function commitHot(el, v) {
+    var key = el.getAttribute('data-key');
+    set(key, round(clampFor(el, v), num(el, 'data-decimals', 0)));
+  }
+
+  // Track a drag on the document. onMove gets every mousemove; onEnd gets
+  // true for a real mouseup, false if the button was released somewhere the
+  // panel couldn't see (outside it, or the window lost focus).
+  function track(onMove, onEnd) {
+    function move(ev) {
+      if (ev.buttons === 0) {
+        end(false);
+        return;
+      }
+      onMove(ev);
+    }
+    function up() { end(true); }
+    function lost() { end(false); }
+    function end(released) {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      window.removeEventListener('blur', lost);
+      onEnd(released);
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    window.addEventListener('blur', lost);
+  }
+
+  function bindHot(el) {
+    el.addEventListener('mousedown', function (e) {
+      if (e.button !== 0 || el.classList.contains('editing')) return;
+      e.preventDefault();
       var key = el.getAttribute('data-key');
-      if (el.classList.contains('seg') || el.classList.contains('anchor')) {
-        el.addEventListener('click', function (e) {
-          var b = e.target.closest('button');
-          if (b && el.contains(b)) set(key, parseInt(b.getAttribute('data-value'), 10));
-        });
-      } else if (el.classList.contains('swatch')) {
-        el.addEventListener('click', function () { pickColor(key); });
-      } else if (el.type === 'checkbox') {
-        el.addEventListener('change', function () { set(key, el.checked ? 1 : 0); });
-      } else if (el.tagName === 'SELECT') {
-        el.addEventListener('change', function () { set(key, parseInt(el.value, 10)); });
-      } else {
-        el.addEventListener('change', function () {
-          var v = parseFloat(el.value);
-          if (isNaN(v)) {
-            el.value = String(settings[key]);
-            return;
-          }
-          v = clampTo(el, v);
-          el.value = String(v);
-          set(key, v);
-        });
+      var step = num(el, 'data-step', 1);
+      var lastX = e.clientX, travel = 0, value = settings[key], dragging = false;
+      // Modifiers scale only the movement since the last event, so pressing
+      // Shift or Ctrl/Cmd mid-drag never makes the value jump, and the value
+      // turns around as soon as the drag does, even after hitting a limit.
+      track(function (ev) {
+        var d = ev.clientX - lastX;
+        lastX = ev.clientX;
+        if (!dragging) {
+          travel += d;
+          if (Math.abs(travel) < DRAG_THRESHOLD) return;
+          dragging = true;
+          document.body.classList.add('scrubbing');
+          d = travel - (travel > 0 ? DRAG_THRESHOLD : -DRAG_THRESHOLD);
+        }
+        value = clampFor(el, value + d * step * scrubMultiplier(ev));
+        commitHot(el, value);
+      }, function (released) {
+        document.body.classList.remove('scrubbing');
+        if (!dragging && released) startEdit(el);
+      });
+    });
+    el.addEventListener('keydown', function (e) {
+      var key = el.getAttribute('data-key');
+      var step = num(el, 'data-step', 1) * scrubMultiplier(e);
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        startEdit(el);
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        commitHot(el, settings[key] + step);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        commitHot(el, settings[key] - step);
       }
     });
+  }
 
-    // Drag a label left/right to scrub its number, like After Effects (Shift = x10).
-    each('.scrub', function (label) {
-      var input = document.getElementById(label.getAttribute('for'));
-      if (!input) return;
-      label.addEventListener('mousedown', function (e) {
-        var startX = e.clientX;
-        var start = parseFloat(input.value) || 0;
-        function move(ev) {
-          var v = clampTo(input, Math.round(start + (ev.clientX - startX) * (ev.shiftKey ? 10 : 1)));
-          input.value = String(v);
-          set(input.getAttribute('data-key'), v);
-        }
-        function up() {
-          document.removeEventListener('mousemove', move);
-          document.removeEventListener('mouseup', up);
-        }
-        document.addEventListener('mousemove', move);
-        document.addEventListener('mouseup', up);
-      });
+  function startEdit(el) {
+    var key = el.getAttribute('data-key');
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'hot-edit';
+    input.value = String(round(settings[key], 3));
+    input.setAttribute('aria-label', el.getAttribute('aria-label') || key);
+    el.classList.add('editing');
+    el.textContent = '';
+    el.appendChild(input);
+    input.focus();
+    input.select();
+    var done = false;
+    function finish(commit, moveBy) {
+      if (done) return;
+      done = true;
+      var v = parseFloat(input.value);
+      el.classList.remove('editing');
+      if (input.parentNode) el.removeChild(input);
+      if (commit && isFinite(v)) commitHot(el, v);
+      else render();
+      if (moveBy) {
+        var all = Array.prototype.filter.call(document.querySelectorAll('.hot[data-key]'), function (h) {
+          return h === el || isVisible(h);
+        });
+        var next = all[(all.indexOf(el) + moveBy + all.length) % all.length];
+        if (next) startEdit(next);
+      } else {
+        el.focus();
+      }
+    }
+    input.addEventListener('keydown', function (e) {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finish(false);
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        finish(true, e.shiftKey ? -1 : 1);
+      }
     });
+    input.addEventListener('blur', function () { finish(true); });
+    input.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+  }
 
-    each('[data-action]', function (b) {
-      b.addEventListener('click', function () {
-        var action = b.getAttribute('data-action');
-        if (action === 'reset') {
-          settings = copy(DEFAULTS);
-          save();
-          render();
-          setStatus('Settings reset.');
-        } else {
-          run(action);
-        }
-      });
+  // ---------------------------------------------------------------------
+  // Sliders and dials
+  // ---------------------------------------------------------------------
+  function bindDrag(el, onPoint) {
+    el.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      onPoint(e);
+      track(onPoint, function () {});
     });
   }
 
-  // Match After Effects' UI brightness.
+  function bindSlider(el) {
+    var key = el.getAttribute('data-key');
+    var hot = $('.hot[data-key="' + key + '"]');
+    bindDrag(el, function (e) {
+      var rect = $('.track', el).getBoundingClientRect();
+      var f = rect.width ? Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) : 0;
+      var lo = num(el, 'data-smin', 0), hi = num(el, 'data-smax', 100);
+      var v = lo + f * (hi - lo);
+      set(key, round(hot ? clampFor(hot, v) : v, num(hot || el, 'data-decimals', 0)));
+    });
+  }
+
+  function bindDial(el) {
+    var key = el.getAttribute('data-key');
+    bindDrag(el, function (e) {
+      var rect = el.getBoundingClientRect();
+      var dx = e.clientX - (rect.left + rect.width / 2), dy = e.clientY - (rect.top + rect.height / 2);
+      if (!dx && !dy) return;
+      var deg = Math.atan2(dx, -dy) * 180 / Math.PI;
+      var turns = Math.floor(settings[key] / 360);
+      set(key, round(turns * 360 + ((deg % 360) + 360) % 360, 1));
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Everything else
+  // ---------------------------------------------------------------------
+  function bindControls() {
+    each('.hot[data-key]', bindHot);
+    each('.slider[data-key]', bindSlider);
+    each('.dial[data-key]', bindDial);
+
+    each('.seg[data-key], .anchor[data-key]', function (el) {
+      var key = el.getAttribute('data-key');
+      el.addEventListener('click', function (e) {
+        var b = e.target.closest('button');
+        if (b && el.contains(b)) set(key, parseInt(b.getAttribute('data-value'), 10));
+      });
+    });
+    each('select[data-key]', function (el) {
+      el.addEventListener('change', function () {
+        set(el.getAttribute('data-key'), parseInt(el.value, 10));
+        // Hand the keyboard back to After Effects (a focused menu keeps it).
+        el.blur();
+      });
+    });
+    each('input[type="checkbox"][data-key]', function (el) {
+      el.addEventListener('change', function () { set(el.getAttribute('data-key'), el.checked ? 1 : 0); });
+    });
+    each('[data-pick]', function (el) {
+      el.addEventListener('click', function () { pickColor(el.getAttribute('data-pick')); });
+    });
+    each('[data-swap]', function (el) {
+      el.addEventListener('click', function () {
+        var keys = el.getAttribute('data-swap').split(','), values = {};
+        values[keys[0]] = settings[keys[1]];
+        values[keys[1]] = settings[keys[0]];
+        setMany(values);
+      });
+    });
+    each('[data-twirl] > .twirl, [data-twirl] > .head', function (el) {
+      function toggle() {
+        var box = el.parentElement;
+        twirls[box.getAttribute('data-twirl')] = !box.classList.contains('open');
+        saveTwirls();
+        render();
+      }
+      el.addEventListener('click', function (e) {
+        if (e.target.closest('.reset')) return;
+        toggle();
+      });
+      el.addEventListener('keydown', function (e) {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    });
+    each('.reset[data-group]', function (el) {
+      function reset(e) {
+        e.stopPropagation();
+        var values = {};
+        GROUPS[el.getAttribute('data-group')].forEach(function (k) { values[k] = copy(DEFAULTS[k]); });
+        setMany(values);
+      }
+      el.addEventListener('click', reset);
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          reset(e);
+        }
+      });
+    });
+    each('[data-action]', function (b) {
+      b.addEventListener('click', function () { run(b.getAttribute('data-action')); });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Keyboard: CEP sends keys to After Effects unless a text field has focus.
+  // While a value, section header or Reset link has focus, ask for the few
+  // keys the panel uses; everything else (Space to preview...) stays with AE.
+  // ---------------------------------------------------------------------
+  var KEY_CODES = /Mac/.test(navigator.platform) ?
+    { Enter: [36, 76], Space: [49], Left: [123], Right: [124], Down: [125], Up: [126] } :
+    { Enter: [13], Space: [32], Left: [37], Up: [38], Right: [39], Down: [40] };
+
+  function keyInterest(names) {
+    var list = [];
+    names.forEach(function (n) {
+      KEY_CODES[n].forEach(function (code) {
+        list.push({ keyCode: code }, { keyCode: code, shiftKey: true }, { keyCode: code, ctrlKey: true }, { keyCode: code, metaKey: true });
+      });
+    });
+    return JSON.stringify(list);
+  }
+
+  function bindKeyboard() {
+    if (cep && cep.registerKeyEventsInterest) {
+      document.addEventListener('focusin', function (e) {
+        var t = e.target, names = null;
+        if (t.classList && t.classList.contains('hot')) names = ['Enter', 'Left', 'Right', 'Up', 'Down'];
+        else if (t.matches && t.matches('.fx > .head, .reset, .twirl')) names = ['Enter', 'Space'];
+        cep.registerKeyEventsInterest(names ? keyInterest(names) : '');
+      });
+      document.addEventListener('focusout', function () { cep.registerKeyEventsInterest(''); });
+    }
+    // Focus rings only for keyboard users (Chromium 61 has no :focus-visible).
+    document.addEventListener('mousedown', function () { document.body.classList.add('pointer'); }, true);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Tab') document.body.classList.remove('pointer');
+    }, true);
+  }
+
+  // ---------------------------------------------------------------------
+  // Theme: follow After Effects' Brightness setting. Colors are derived from
+  // the panel background so contrast holds from darkest to lightest.
+  // ---------------------------------------------------------------------
+  function shade(c, d) {
+    function ch(v) { return Math.max(0, Math.min(255, Math.round(v + d))); }
+    return 'rgb(' + ch(c.r) + ',' + ch(c.g) + ',' + ch(c.b) + ')';
+  }
+
   function applyTheme() {
     if (!cep) return;
     try {
-      var env = JSON.parse(cep.getHostEnvironment());
-      var c = env.appSkinInfo.panelBackgroundColor.color;
-      var root = document.documentElement;
-      root.style.setProperty('--bg', 'rgb(' + Math.round(c.red) + ',' + Math.round(c.green) + ',' + Math.round(c.blue) + ')');
-      root.classList.toggle('light', (0.299 * c.red + 0.587 * c.green + 0.114 * c.blue) / 255 > 0.5);
+      var skin = JSON.parse(cep.getHostEnvironment()).appSkinInfo;
+      var c = skin.panelBackgroundColor.color, bg = { r: c.red, g: c.green, b: c.blue };
+      var lum = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) / 255;
+      var root = document.documentElement, light = lum > 0.47;
+      var put = function (k, v) { root.style.setProperty(k, v); };
+      root.classList.toggle('light', light);
+      put('--bg', shade(bg, 0));
+      if (light) {
+        put('--head-bg', shade(bg, -16));
+        put('--line', shade(bg, -48));
+        put('--field', shade(bg, 30));
+        put('--well-border', shade(bg, -90));
+        put('--control', shade(bg, -14));
+        put('--control-hover', shade(bg, -4));
+        put('--control-border', shade(bg, -70));
+        put('--muted', shade(bg, -95));
+        put('--twirl', shade(bg, -110));
+        put('--text', '#1b1b1b');
+        put('--hot', '#0d5dc4');
+        put('--hot-hover', '#08458f');
+      } else {
+        var mid = lum > 0.3;
+        put('--head-bg', shade(bg, 19));
+        put('--line', shade(bg, -15));
+        put('--field', shade(bg, -15));
+        put('--well-border', shade(bg, 112));
+        put('--control', shade(bg, 30));
+        put('--control-hover', shade(bg, 42));
+        put('--control-border', shade(bg, 60));
+        put('--muted', shade(bg, mid ? 120 : 95));
+        put('--twirl', shade(bg, 120));
+        put('--text', mid ? '#ffffff' : '#ebebeb');
+        put('--hot', mid ? '#b9dcff' : '#5eaaf7');
+        put('--hot-hover', mid ? '#e1f0ff' : '#8cc4ff');
+      }
+      if (skin.baseFontFamily) put('--font', '"' + skin.baseFontFamily + '", -apple-system, "Segoe UI", sans-serif');
+      if (skin.baseFontSize) put('--font-size', skin.baseFontSize + 'px');
     } catch (e) {}
   }
 
@@ -263,6 +635,7 @@
     cep.addEventListener('com.adobe.csxs.events.ThemeColorChanged', applyTheme);
   }
   bindControls();
+  bindKeyboard();
   render();
   loadHost();
 

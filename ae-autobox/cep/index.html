@@ -7,106 +7,264 @@
 </head>
 <body class="is-free">
   <main class="panel">
-    <section class="group" aria-labelledby="h-layout">
-      <h2 id="h-layout">Layout</h2>
 
-      <div class="field">
-        <span class="label">Mode</span>
-        <div class="seg" data-key="layout" role="radiogroup" aria-label="Layout mode">
-          <button type="button" role="radio" data-value="1" title="Layers stay where they are and the box wraps around them">Free</button>
-          <button type="button" role="radio" data-value="2" title="Stack layers top to bottom, in timeline order">Vertical</button>
-          <button type="button" role="radio" data-value="3" title="Stack layers left to right, in timeline order">Horizontal</button>
+    <!-- Layout -->
+    <section class="fx" data-twirl="g-layout">
+      <div class="head" role="button" tabindex="0">
+        <span class="twirl" aria-hidden="true"></span>
+        <span class="label"><span class="badge">fx</span><span class="title">Layout</span></span>
+        <span class="reset" data-group="layout" role="button" tabindex="0" title="Restore the default layout settings">Reset</span>
+      </div>
+      <div class="body">
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <span class="name">Mode</span>
+          <div class="value">
+            <div class="seg icons" data-key="layout" role="radiogroup" aria-label="Layout mode">
+              <button type="button" role="radio" data-value="1" aria-label="Free" title="Free: layers stay where they are and the box wraps around them"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="2" width="6" height="4" rx="0.5"/><rect x="7" y="8" width="6" height="4" rx="0.5"/></svg></button>
+              <button type="button" role="radio" data-value="2" aria-label="Vertical stack" title="Vertical stack: top to bottom, in timeline order"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="2" y="1.5" width="10" height="3" rx="0.5"/><rect x="2" y="5.5" width="10" height="3" rx="0.5"/><rect x="2" y="9.5" width="10" height="3" rx="0.5"/></svg></button>
+              <button type="button" role="radio" data-value="3" aria-label="Horizontal stack" title="Horizontal stack: left to right, in timeline order"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="2" width="3" height="10" rx="0.5"/><rect x="5.5" y="2" width="3" height="10" rx="0.5"/><rect x="9.5" y="2" width="3" height="10" rx="0.5"/></svg></button>
+            </div>
+            <span class="hint" id="layout-name">Free</span>
+          </div>
         </div>
-      </div>
 
-      <div class="field stack-only">
-        <label class="label scrub" for="gap" title="Drag to adjust">Gap</label>
-        <input id="gap" type="number" data-key="gap" step="1" title="Space between stacked layers (px)">
-        <span class="unit">px</span>
-      </div>
-
-      <div class="field stack-only">
-        <span class="label">Align</span>
-        <div class="seg" data-key="align" role="radiogroup" aria-label="Align">
-          <button type="button" role="radio" data-value="1" title="Left in a vertical stack, top in a horizontal one">Start</button>
-          <button type="button" role="radio" data-value="2" title="Centered across the stack">Center</button>
-          <button type="button" role="radio" data-value="3" title="Right in a vertical stack, bottom in a horizontal one">End</button>
+        <div class="prop stack-only" data-twirl="s-gap" data-open="false">
+          <button type="button" class="twirl" aria-label="Show Gap slider"></button>
+          <span class="name">Gap</span>
+          <div class="value"><span class="hot" data-key="gap" tabindex="0" role="spinbutton" aria-label="Gap" title="Space between stacked layers. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="body">
+            <div class="slider" data-key="gap" data-smin="0" data-smax="100"><span class="lo">0</span><span class="hi">100</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
         </div>
-      </div>
 
-      <div class="field stack-only">
-        <label class="label" for="justify">Justify</label>
-        <select id="justify" data-key="justify" title="Where the stack sits when the box is bigger than its contents (Min size)">
-          <option value="1">Start</option>
-          <option value="2">Center</option>
-          <option value="3">End</option>
-          <option value="4">Space Between</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <span class="label">Anchor</span>
-        <div class="anchor" data-key="anchor" role="radiogroup" aria-label="Box anchor" title="The point of the box that stays put while it grows or shrinks">
-          <button type="button" role="radio" data-value="1" aria-label="Top Left"></button>
-          <button type="button" role="radio" data-value="2" aria-label="Top"></button>
-          <button type="button" role="radio" data-value="3" aria-label="Top Right"></button>
-          <button type="button" role="radio" data-value="4" aria-label="Left"></button>
-          <button type="button" role="radio" data-value="5" aria-label="Center"></button>
-          <button type="button" role="radio" data-value="6" aria-label="Right"></button>
-          <button type="button" role="radio" data-value="7" aria-label="Bottom Left"></button>
-          <button type="button" role="radio" data-value="8" aria-label="Bottom"></button>
-          <button type="button" role="radio" data-value="9" aria-label="Bottom Right"></button>
+        <div class="prop stack-only">
+          <span class="twirl-space"></span>
+          <span class="name">Align</span>
+          <div class="value">
+            <div class="seg icons" data-key="align" role="radiogroup" aria-label="Align">
+              <button type="button" role="radio" data-value="1" aria-label="Start" title="Start: left in a vertical stack, top in a horizontal one"><svg class="for-v" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="1" height="12"/><rect x="3" y="3" width="9" height="3"/><rect x="3" y="8" width="5" height="3"/></svg><svg class="for-h" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="1"/><rect x="3" y="3" width="3" height="9"/><rect x="8" y="3" width="3" height="5"/></svg></button>
+              <button type="button" role="radio" data-value="2" aria-label="Center" title="Center"><svg class="for-v" viewBox="0 0 14 14" aria-hidden="true"><rect x="6.5" y="1" width="1" height="12"/><rect x="2.5" y="3" width="9" height="3"/><rect x="4.5" y="8" width="5" height="3"/></svg><svg class="for-h" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="6.5" width="12" height="1"/><rect x="3" y="2.5" width="3" height="9"/><rect x="8" y="4.5" width="3" height="5"/></svg></button>
+              <button type="button" role="radio" data-value="3" aria-label="End" title="End: right in a vertical stack, bottom in a horizontal one"><svg class="for-v" viewBox="0 0 14 14" aria-hidden="true"><rect x="12" y="1" width="1" height="12"/><rect x="2" y="3" width="9" height="3"/><rect x="6" y="8" width="5" height="3"/></svg><svg class="for-h" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="12" width="12" height="1"/><rect x="3" y="2" width="3" height="9"/><rect x="8" y="6" width="3" height="5"/></svg></button>
+            </div>
+          </div>
         </div>
-        <span class="hint" id="anchor-name">Top Left</span>
+
+        <div class="prop stack-only">
+          <span class="twirl-space"></span>
+          <label class="name" for="justify">Justify</label>
+          <div class="value">
+            <select id="justify" data-key="justify" title="Where the stack sits when the box is bigger than its contents (Min Size)">
+              <option value="1">Start</option>
+              <option value="2">Center</option>
+              <option value="3">End</option>
+              <option value="4">Space Between</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <span class="name">Box Anchor</span>
+          <div class="value">
+            <div class="anchor" data-key="anchor" role="radiogroup" aria-label="Box anchor" title="The point of the box that stays put while it grows or shrinks">
+              <button type="button" role="radio" data-value="1" aria-label="Top Left"></button>
+              <button type="button" role="radio" data-value="2" aria-label="Top"></button>
+              <button type="button" role="radio" data-value="3" aria-label="Top Right"></button>
+              <button type="button" role="radio" data-value="4" aria-label="Left"></button>
+              <button type="button" role="radio" data-value="5" aria-label="Center"></button>
+              <button type="button" role="radio" data-value="6" aria-label="Right"></button>
+              <button type="button" role="radio" data-value="7" aria-label="Bottom Left"></button>
+              <button type="button" role="radio" data-value="8" aria-label="Bottom"></button>
+              <button type="button" role="radio" data-value="9" aria-label="Bottom Right"></button>
+            </div>
+            <span class="hint" id="anchor-name">Top Left</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="group" aria-labelledby="h-box">
-      <h2 id="h-box">Box</h2>
-
-      <div class="field">
-        <label class="label scrub" for="padding" title="Drag to adjust">Padding</label>
-        <input id="padding" type="number" data-key="padding" step="1" title="Space between the layers and the edge of the box (px)">
-        <label class="label scrub inline" for="radius" title="Drag to adjust">Radius</label>
-        <input id="radius" type="number" data-key="radius" min="0" step="1" title="Corner radius (px)">
+    <!-- Box -->
+    <section class="fx" data-twirl="g-box">
+      <div class="head" role="button" tabindex="0">
+        <span class="twirl" aria-hidden="true"></span>
+        <span class="label"><span class="badge">fx</span><span class="title">Box</span></span>
+        <span class="reset" data-group="box" role="button" tabindex="0" title="Restore the default box settings">Reset</span>
       </div>
+      <div class="body">
+        <div class="prop" data-twirl="s-padding">
+          <button type="button" class="twirl" aria-label="Show Padding slider"></button>
+          <span class="name">Padding</span>
+          <div class="value"><span class="hot" data-key="padding" tabindex="0" role="spinbutton" aria-label="Padding" title="Space between the layers and the edge of the box. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="body">
+            <div class="slider" data-key="padding" data-smin="0" data-smax="200"><span class="lo">0</span><span class="hi">200</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
+        </div>
 
-      <div class="field">
-        <span class="label">Extra</span>
-        <div class="quad" title="Extra padding per side (px), added to Padding">
-          <label class="mini scrub" for="extraTop">T</label><input id="extraTop" type="number" data-key="extraTop" step="1">
-          <label class="mini scrub" for="extraRight">R</label><input id="extraRight" type="number" data-key="extraRight" step="1">
-          <label class="mini scrub" for="extraBottom">B</label><input id="extraBottom" type="number" data-key="extraBottom" step="1">
-          <label class="mini scrub" for="extraLeft">L</label><input id="extraLeft" type="number" data-key="extraLeft" step="1">
+        <div class="prop" data-twirl="s-radius">
+          <button type="button" class="twirl" aria-label="Show Corner Radius slider"></button>
+          <span class="name">Corner Radius</span>
+          <div class="value"><span class="hot" data-key="radius" data-min="0" tabindex="0" role="spinbutton" aria-label="Corner Radius" title="Corner rounding. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="body">
+            <div class="slider" data-key="radius" data-smin="0" data-smax="200"><span class="lo">0</span><span class="hi">200</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
+        </div>
+
+        <div class="prop" data-twirl="s-extra" data-open="false">
+          <button type="button" class="twirl" aria-label="Show extra padding"></button>
+          <span class="name">Extra Padding</span>
+          <div class="value"><span class="hint">per side, added to Padding</span></div>
+          <div class="body">
+            <div class="sub"><span class="name">Top</span><span class="hot" data-key="extraTop" tabindex="0" role="spinbutton" aria-label="Extra Top"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Right</span><span class="hot" data-key="extraRight" tabindex="0" role="spinbutton" aria-label="Extra Right"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Bottom</span><span class="hot" data-key="extraBottom" tabindex="0" role="spinbutton" aria-label="Extra Bottom"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Left</span><span class="hot" data-key="extraLeft" tabindex="0" role="spinbutton" aria-label="Extra Left"></span><span class="unit">px</span></div>
+          </div>
+        </div>
+
+        <div class="prop" data-twirl="s-min" data-open="false">
+          <button type="button" class="twirl" aria-label="Show minimum size"></button>
+          <span class="name">Min Size</span>
+          <div class="value"><span class="hint">0 = fit contents</span></div>
+          <div class="body">
+            <div class="sub"><span class="name">Width</span><span class="hot" data-key="minWidth" data-min="0" tabindex="0" role="spinbutton" aria-label="Min Width"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Height</span><span class="hot" data-key="minHeight" data-min="0" tabindex="0" role="spinbutton" aria-label="Min Height"></span><span class="unit">px</span></div>
+          </div>
+        </div>
+
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="ignore-hidden">Ignore Hidden</label>
+          <div class="value"><label class="check"><input id="ignore-hidden" type="checkbox" data-key="ignoreHidden"><span class="box"></span><span class="hint">Hidden layers take no space</span></label></div>
         </div>
       </div>
+    </section>
 
-      <div class="field">
-        <span class="label">Min size</span>
-        <label class="mini scrub" for="minWidth">W</label>
-        <input id="minWidth" type="number" data-key="minWidth" min="0" step="1" title="Minimum width (px), 0 = fit contents">
-        <label class="mini scrub" for="minHeight">H</label>
-        <input id="minHeight" type="number" data-key="minHeight" min="0" step="1" title="Minimum height (px), 0 = fit contents">
+    <!-- Fill -->
+    <section class="fx" data-twirl="g-fill">
+      <div class="head" role="button" tabindex="0">
+        <span class="twirl" aria-hidden="true"></span>
+        <span class="label"><span class="badge">fx</span><span class="title">Fill</span></span>
+        <span class="reset" data-group="fill" role="button" tabindex="0" title="Restore the default fill">Reset</span>
       </div>
+      <div class="body">
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="fill-type">Type</label>
+          <div class="value">
+            <select id="fill-type" data-key="fillType">
+              <option value="1">Solid</option>
+              <option value="2">Linear Gradient</option>
+              <option value="3">Radial Gradient</option>
+            </select>
+          </div>
+        </div>
 
-      <div class="field">
-        <span class="label">Fill</span>
-        <button type="button" class="swatch" data-key="fillColor" aria-label="Fill color" title="Fill color"></button>
-        <input id="fillOpacity" type="number" data-key="fillOpacity" min="0" max="100" step="1" title="Fill opacity">
-        <span class="unit">%</span>
+        <div class="prop" data-show="fillType:1">
+          <span class="twirl-space"></span>
+          <span class="name">Color</span>
+          <div class="value"><button type="button" class="swatch" data-key="fillColor" data-pick="fillColor" aria-label="Fill color" title="Fill color"></button></div>
+        </div>
+
+        <div class="prop" data-show="fillType:2,3">
+          <span class="twirl-space"></span>
+          <span class="name">Colors</span>
+          <div class="value">
+            <div class="gradient" data-from="fillColor" data-to="fillColor2" data-type="fillType">
+              <div class="ramp"></div>
+              <button type="button" class="swatch stop a" data-key="fillColor" data-pick="fillColor" aria-label="Fill start color" title="Start color"></button>
+              <button type="button" class="swatch stop b" data-key="fillColor2" data-pick="fillColor2" aria-label="Fill end color" title="End color"></button>
+            </div>
+            <button type="button" class="icon" data-swap="fillColor,fillColor2" aria-label="Swap fill colors" title="Swap colors">&#8644;</button>
+          </div>
+        </div>
+
+        <div class="prop" data-show="fillType:2">
+          <span class="twirl-space"></span>
+          <span class="name">Angle</span>
+          <div class="value">
+            <div class="dial" data-key="fillAngle" title="Drag to set the gradient direction"><span class="hand"></span></div>
+            <span class="hot" data-key="fillAngle" data-format="angle" data-decimals="1" tabindex="0" role="spinbutton" aria-label="Fill gradient angle"></span>
+          </div>
+        </div>
+
+        <div class="prop" data-twirl="s-fillOpacity" data-open="false">
+          <button type="button" class="twirl" aria-label="Show Opacity slider"></button>
+          <span class="name">Opacity</span>
+          <div class="value"><span class="hot" data-key="fillOpacity" data-min="0" data-max="100" tabindex="0" role="spinbutton" aria-label="Fill opacity"></span><span class="unit">%</span></div>
+          <div class="body">
+            <div class="slider" data-key="fillOpacity" data-smin="0" data-smax="100"><span class="lo">0%</span><span class="hi">100%</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
+        </div>
       </div>
+    </section>
 
-      <div class="field">
-        <span class="label">Stroke</span>
-        <button type="button" class="swatch" data-key="strokeColor" aria-label="Stroke color" title="Stroke color"></button>
-        <input id="strokeWidth" type="number" data-key="strokeWidth" min="0" step="1" title="Stroke width, 0 = no stroke">
-        <span class="unit">px</span>
+    <!-- Stroke -->
+    <section class="fx" data-twirl="g-stroke">
+      <div class="head" role="button" tabindex="0">
+        <span class="twirl" aria-hidden="true"></span>
+        <span class="label"><span class="badge">fx</span><span class="title">Stroke</span></span>
+        <span class="reset" data-group="stroke" role="button" tabindex="0" title="Restore the default stroke">Reset</span>
       </div>
+      <div class="body">
+        <div class="prop" data-twirl="s-strokeWidth">
+          <button type="button" class="twirl" aria-label="Show Stroke Width slider"></button>
+          <span class="name">Width</span>
+          <div class="value"><span class="hot" data-key="strokeWidth" data-min="0" tabindex="0" role="spinbutton" aria-label="Stroke width" title="0 = no stroke. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="body">
+            <div class="slider" data-key="strokeWidth" data-smin="0" data-smax="50"><span class="lo">0</span><span class="hi">50</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
+        </div>
 
-      <label class="check">
-        <input type="checkbox" data-key="ignoreHidden">
-        <span>Ignore hidden layers</span>
-      </label>
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="stroke-type">Type</label>
+          <div class="value">
+            <select id="stroke-type" data-key="strokeType">
+              <option value="1">Solid</option>
+              <option value="2">Linear Gradient</option>
+              <option value="3">Radial Gradient</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="prop" data-show="strokeType:1">
+          <span class="twirl-space"></span>
+          <span class="name">Color</span>
+          <div class="value"><button type="button" class="swatch" data-key="strokeColor" data-pick="strokeColor" aria-label="Stroke color" title="Stroke color"></button></div>
+        </div>
+
+        <div class="prop" data-show="strokeType:2,3">
+          <span class="twirl-space"></span>
+          <span class="name">Colors</span>
+          <div class="value">
+            <div class="gradient" data-from="strokeColor" data-to="strokeColor2" data-type="strokeType">
+              <div class="ramp"></div>
+              <button type="button" class="swatch stop a" data-key="strokeColor" data-pick="strokeColor" aria-label="Stroke start color" title="Start color"></button>
+              <button type="button" class="swatch stop b" data-key="strokeColor2" data-pick="strokeColor2" aria-label="Stroke end color" title="End color"></button>
+            </div>
+            <button type="button" class="icon" data-swap="strokeColor,strokeColor2" aria-label="Swap stroke colors" title="Swap colors">&#8644;</button>
+          </div>
+        </div>
+
+        <div class="prop" data-show="strokeType:2">
+          <span class="twirl-space"></span>
+          <span class="name">Angle</span>
+          <div class="value">
+            <div class="dial" data-key="strokeAngle" title="Drag to set the gradient direction"><span class="hand"></span></div>
+            <span class="hot" data-key="strokeAngle" data-format="angle" data-decimals="1" tabindex="0" role="spinbutton" aria-label="Stroke gradient angle"></span>
+          </div>
+        </div>
+
+        <div class="prop" data-twirl="s-strokeOpacity" data-open="false">
+          <button type="button" class="twirl" aria-label="Show Opacity slider"></button>
+          <span class="name">Opacity</span>
+          <div class="value"><span class="hot" data-key="strokeOpacity" data-min="0" data-max="100" tabindex="0" role="spinbutton" aria-label="Stroke opacity"></span><span class="unit">%</span></div>
+          <div class="body">
+            <div class="slider" data-key="strokeOpacity" data-smin="0" data-smax="100"><span class="lo">0%</span><span class="hi">100%</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <div class="actions">
@@ -119,23 +277,20 @@
         <button type="button" data-action="apply" title="Push these settings to the selected box(es)">Apply to Box</button>
         <button type="button" data-action="select" title="Select every layer in the selected box(es)">Select Members</button>
       </div>
-      <div class="pair">
-        <button type="button" data-action="release" title="Bake the layout and remove the AutoBox rig from the selected box(es)">Release</button>
-        <button type="button" data-action="reset" title="Restore the default panel settings">Reset</button>
-      </div>
+      <button type="button" data-action="release" title="Bake the layout and remove the AutoBox rig from the selected box(es)">Release</button>
     </div>
 
     <p class="status" id="status" role="status" aria-live="polite"></p>
 
     <details class="help">
       <summary>How it works</summary>
-      <p><strong>Create Box</strong> adds a shape layer behind the selected layers, sized to fit with padding and rounded corners. The layers are parented to it, so moving, scaling or rotating the box moves the group.</p>
+      <p><strong>Create Box</strong> adds a shape layer behind the selected layers and parents them to it. Moving, scaling or rotating the box moves the group. Any layer parented to a box is in that box, so editing text, renaming or reordering layers is safe. Use <strong>Add to Box</strong> and <strong>Remove</strong> to change what's in a box.</p>
       <p><strong>Free</strong> keeps layers where they are and wraps the box around them. <strong>Vertical</strong> and <strong>Horizontal</strong> stack them in timeline order with the gap between. Reorder layers in the timeline to reorder the stack.</p>
-      <p>Everything updates live as text changes, layers scale or animate. Every setting is on the box layer's <strong>Effect Controls</strong>, where it can be keyframed. These panel values are the defaults for new boxes; <strong>Apply to Box</strong> pushes them to selected boxes.</p>
-      <p><strong>Release</strong> bakes the current layout into plain values and keyframes and removes the rig. Boxes can be nested by putting one box inside another.</p>
+      <p>Drag a blue value left or right to change it (Shift for bigger steps, Ctrl/Cmd for finer ones), or click it to type. Everything also lives on the box layer's <strong>Effect Controls</strong>, where it can be keyframed. These panel values are the defaults for new boxes; <strong>Apply to Box</strong> pushes them onto selected boxes (keyframed controls are left alone).</p>
+      <p><strong>Release</strong> bakes the current layout into plain values and keyframes and removes the rig.</p>
     </details>
 
-    <footer>AutoBox <span id="version">1.0.0</span> · Braised Tools</footer>
+    <footer>AutoBox <span id="version">2.0.0</span> &middot; Braised Tools</footer>
   </main>
   <script src="js/panel.js"></script>
 </body>
