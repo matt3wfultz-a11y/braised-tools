@@ -32,7 +32,7 @@
         <div class="prop stack-only" data-twirl="s-gap" data-open="false">
           <button type="button" class="twirl" aria-label="Show Gap slider"></button>
           <span class="name">Gap</span>
-          <div class="value"><span class="hot" data-key="gap" tabindex="0" role="spinbutton" aria-label="Gap" title="Space between stacked layers. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="value"><span class="hot" data-max="100000" data-min="-100000" data-key="gap" tabindex="0" role="spinbutton" aria-label="Gap" title="Space between stacked layers. Drag, or click to type"></span><span class="unit">px</span></div>
           <div class="body">
             <div class="slider" data-key="gap" data-smin="0" data-smax="100"><span class="lo">0</span><span class="hi">100</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
           </div>
@@ -95,7 +95,7 @@
         <div class="prop" data-twirl="s-padding">
           <button type="button" class="twirl" aria-label="Show Padding slider"></button>
           <span class="name">Padding</span>
-          <div class="value"><span class="hot" data-key="padding" tabindex="0" role="spinbutton" aria-label="Padding" title="Space between the layers and the edge of the box. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="value"><span class="hot" data-max="100000" data-min="-100000" data-key="padding" tabindex="0" role="spinbutton" aria-label="Padding" title="Space between the layers and the edge of the box. Drag, or click to type"></span><span class="unit">px</span></div>
           <div class="body">
             <div class="slider" data-key="padding" data-smin="0" data-smax="200"><span class="lo">0</span><span class="hi">200</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
           </div>
@@ -104,7 +104,7 @@
         <div class="prop" data-twirl="s-radius">
           <button type="button" class="twirl" aria-label="Show Corner Radius slider"></button>
           <span class="name">Corner Radius</span>
-          <div class="value"><span class="hot" data-key="radius" data-min="0" tabindex="0" role="spinbutton" aria-label="Corner Radius" title="Corner rounding. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="value"><span class="hot" data-max="100000" data-key="radius" data-min="0" tabindex="0" role="spinbutton" aria-label="Corner Radius" title="Corner rounding. Drag, or click to type"></span><span class="unit">px</span></div>
           <div class="body">
             <div class="slider" data-key="radius" data-smin="0" data-smax="200"><span class="lo">0</span><span class="hi">200</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
           </div>
@@ -115,10 +115,10 @@
           <span class="name">Extra Padding</span>
           <div class="value"><span class="hint">per side, added to Padding</span></div>
           <div class="body">
-            <div class="sub"><span class="name">Top</span><span class="hot" data-key="extraTop" tabindex="0" role="spinbutton" aria-label="Extra Top"></span><span class="unit">px</span></div>
-            <div class="sub"><span class="name">Right</span><span class="hot" data-key="extraRight" tabindex="0" role="spinbutton" aria-label="Extra Right"></span><span class="unit">px</span></div>
-            <div class="sub"><span class="name">Bottom</span><span class="hot" data-key="extraBottom" tabindex="0" role="spinbutton" aria-label="Extra Bottom"></span><span class="unit">px</span></div>
-            <div class="sub"><span class="name">Left</span><span class="hot" data-key="extraLeft" tabindex="0" role="spinbutton" aria-label="Extra Left"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Top</span><span class="hot" data-max="100000" data-min="-100000" data-key="extraTop" tabindex="0" role="spinbutton" aria-label="Extra Top"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Right</span><span class="hot" data-max="100000" data-min="-100000" data-key="extraRight" tabindex="0" role="spinbutton" aria-label="Extra Right"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Bottom</span><span class="hot" data-max="100000" data-min="-100000" data-key="extraBottom" tabindex="0" role="spinbutton" aria-label="Extra Bottom"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Left</span><span class="hot" data-max="100000" data-min="-100000" data-key="extraLeft" tabindex="0" role="spinbutton" aria-label="Extra Left"></span><span class="unit">px</span></div>
           </div>
         </div>
 
@@ -127,8 +127,8 @@
           <span class="name">Min Size</span>
           <div class="value"><span class="hint">0 = fit contents</span></div>
           <div class="body">
-            <div class="sub"><span class="name">Width</span><span class="hot" data-key="minWidth" data-min="0" tabindex="0" role="spinbutton" aria-label="Min Width"></span><span class="unit">px</span></div>
-            <div class="sub"><span class="name">Height</span><span class="hot" data-key="minHeight" data-min="0" tabindex="0" role="spinbutton" aria-label="Min Height"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Width</span><span class="hot" data-max="100000" data-key="minWidth" data-min="0" tabindex="0" role="spinbutton" aria-label="Min Width"></span><span class="unit">px</span></div>
+            <div class="sub"><span class="name">Height</span><span class="hot" data-max="100000" data-key="minHeight" data-min="0" tabindex="0" role="spinbutton" aria-label="Min Height"></span><span class="unit">px</span></div>
           </div>
         </div>
 
@@ -184,7 +184,7 @@
           <span class="name">Angle</span>
           <div class="value">
             <div class="dial" data-key="fillAngle" title="Drag to set the gradient direction"><span class="hand"></span></div>
-            <span class="hot" data-key="fillAngle" data-format="angle" data-decimals="1" tabindex="0" role="spinbutton" aria-label="Fill gradient angle"></span>
+            <span class="hot" data-max="100000" data-min="-100000" data-key="fillAngle" data-format="angle" data-decimals="1" tabindex="0" role="spinbutton" aria-label="Fill gradient angle"></span>
           </div>
         </div>
 
@@ -210,7 +210,7 @@
         <div class="prop" data-twirl="s-strokeWidth">
           <button type="button" class="twirl" aria-label="Show Stroke Width slider"></button>
           <span class="name">Width</span>
-          <div class="value"><span class="hot" data-key="strokeWidth" data-min="0" tabindex="0" role="spinbutton" aria-label="Stroke width" title="0 = no stroke. Drag, or click to type"></span><span class="unit">px</span></div>
+          <div class="value"><span class="hot" data-max="100000" data-key="strokeWidth" data-min="0" tabindex="0" role="spinbutton" aria-label="Stroke width" title="0 = no stroke. Drag, or click to type"></span><span class="unit">px</span></div>
           <div class="body">
             <div class="slider" data-key="strokeWidth" data-smin="0" data-smax="50"><span class="lo">0</span><span class="hi">50</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
           </div>
@@ -252,7 +252,7 @@
           <span class="name">Angle</span>
           <div class="value">
             <div class="dial" data-key="strokeAngle" title="Drag to set the gradient direction"><span class="hand"></span></div>
-            <span class="hot" data-key="strokeAngle" data-format="angle" data-decimals="1" tabindex="0" role="spinbutton" aria-label="Stroke gradient angle"></span>
+            <span class="hot" data-max="100000" data-min="-100000" data-key="strokeAngle" data-format="angle" data-decimals="1" tabindex="0" role="spinbutton" aria-label="Stroke gradient angle"></span>
           </div>
         </div>
 

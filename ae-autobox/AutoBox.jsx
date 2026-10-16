@@ -145,34 +145,41 @@
         // a stack slot). Anything that can't be measured (a camera or light
         // parented to the box) is skipped rather than breaking the box.
         'function ab_members() {',
-        '  var out = [], n = thisComp.numLayers, bi = AB_BOX.index, stack = AB_MODE == 2 || AB_MODE == 3;',
+        '  var out = [], carriers = {}, n = thisComp.numLayers, bi = AB_BOX.index, stack = AB_MODE == 2 || AB_MODE == 3;',
         '  for (var i = 1; i <= n; i++) {',
         '    if (i == bi) continue;',
         '    try {',
         '      var L = thisComp.layer(i);',
         '      if (!L.hasParent || L.hasVideo !== true) continue;',
-        '      var p = L, g = 0, direct = true, hit = false;',
-        '      while (p.hasParent && g++ < 50) {',
-        '        p = p.parent;',
-        '        if (p.index == bi) { hit = true; break; }',
-        '        direct = false;',
+        // cur ends on the direct member that L belongs to (L itself if direct).
+        '      var cur = L, g = 0, hit = false;',
+        '      while (cur.hasParent && g++ < 50) {',
+        '        if (cur.parent.index == bi) { hit = true; break; }',
+        '        cur = cur.parent;',
         '      }',
+        '      if (!hit) continue;',
+        '      var direct = cur.index == L.index, text = ab_isText(L);',
+        // Stroke layers are covered by their box (see ab_outline), and must
+        // drop out with it when it's hidden.
+        '      if (!text && ab_isStrokeLayer(L)) continue;',
+        '      var hidden = AB_SKIP && !L.active;',
+        '      if (!direct) {',
+        // A visible rider keeps its (maybe hidden) member's slot in a stack.
+        '        if (!hidden) carriers[cur.index] = true;',
         // Stacks only lay out direct children; riders don't need measuring.
-        '      if (!hit || (stack && !direct)) continue;',
-        // A hidden direct member keeps a zero-size spot in a stack so any
-        // visible children it carries stay put.
-        '      var ghost = AB_SKIP && !L.active;',
-        '      if (ghost && !stack) continue;',
-        '      var text = ab_isText(L);',
-        '      if (direct && !text && ab_isStrokeLayer(L)) continue;',
+        '        if (stack || hidden) continue;',
+        '      } else if (hidden && !stack) continue;',
         '      var line = text ? -1 : ab_outline(L);',
         '      var m = ab_metrics(L, !text && line < 0, line > 0 ? line : 0);',
         '      m.L = L;',
         '      m.direct = direct;',
-        '      m.ghost = ghost;',
+        '      m.hidden = hidden;',
         '      out.push(m);',
         '    } catch (err) {}',
         '  }',
+        // A hidden member still carrying visible layers keeps its full slot;
+        // otherwise it's a "ghost": a zero-size spot, so it doesn't jump.
+        '  for (var j = 0; j < out.length; j++) out[j].ghost = out[j].hidden && !carriers[out[j].idx];',
         '  return out;',
         '}',
         // Map a point from L's layer space into the box's layer space. Walks
@@ -238,7 +245,10 @@
         '  for (i = 0; i < members.length; i++) {',
         '    if (!members[i].ghost) items.push(members[i]);',
         '  }',
-        '  if (!items.length) return res;',
+        '  if (!items.length) {',
+        '    for (i = 0; i < members.length; i++) { res.pos[members[i].idx] = [0, 0]; res.m[members[i].idx] = members[i]; }',
+        '    return res;',
+        '  }',
         '  var n = items.length, mainSum = 0, cross = 0;',
         '  for (i = 0; i < n; i++) {',
         '    mainSum += vert ? items[i].h : items[i].w;',
@@ -591,8 +601,24 @@
     // (Re)apply the expressions: on the box, and on the position of every
     // layer parented straight to it. A position that already carries someone
     // else's expression is left alone.
-    function rigBox(comp, box, blocked) {
-        var parts = rigParts(box), members = directMembers(comp, box);
+    // Can this box stack its layers (now, or at any of its Layout keyframes)?
+    function canStack(box) {
+        var effect = findControl(box, "Layout");
+        if (!effect) return false;
+        var prop = effect.property(1), stacks = function (v) { v = Math.round(v); return v == 2 || v == 3; };
+        if (prop.numKeys == 0) return stacks(prop.value);
+        for (var i = 1; i <= prop.numKeys; i++) {
+            if (stacks(prop.keyValue(i))) return true;
+        }
+        return false;
+    }
+
+    function rigBox(comp, box, blocked, legacyHandled) {
+        var parts = rigParts(box);
+        // Never drop a 1.x box's name-based member list on the floor.
+        if (!legacyHandled && parts.size.expression.indexOf("AB_M.push(") >= 0) adoptLegacyMembers(comp, box, true);
+        var members = directMembers(comp, box);
+        if (blocked && !canStack(box)) blocked = null;
         setExpression(parts.size, buildExpression("size"));
         setExpression(parts.position, buildExpression("position"));
         setExpression(parts.roundness, buildExpression("roundness"));
@@ -909,15 +935,25 @@
     };
     var BOX_PAINT = { "Stroke": true, "Fill": true, "Linear Gradient Fill": true, "Radial Gradient Fill": true };
 
+    // A paint item AutoBox 1.x made: its color reads the box's own controls
+    // through the old expression.
+    function isLegacyPaint(item) {
+        var color = item.property("ADBE Vector Fill Color") || item.property("ADBE Vector Stroke Color");
+        if (!color) return false;
+        var e = color.expression;
+        return e.indexOf(PAINT_TAG) !== 0 && (e.indexOf('effect("Fill Color")') >= 0 || e.indexOf('effect("Stroke Color")') >= 0);
+    }
+
     // Fill items + tint on the box, and its stroke layer. Safe to run again.
     // A solid stroke on a solid fill is drawn in the box itself (above the
     // fills), so fading the box fades both as one layer.
     function paintBox(comp, box) {
         var contents = rigGroup(box).property("ADBE Vectors Group"), i;
-        // Boxes from older versions have unnamed "Fill 1" / "Stroke 1" items.
+        // Boxes from AutoBox 1.x have an unnamed "Fill 1" / "Stroke 1" driven by
+        // the old expressions; anything else in the group is the user's.
         for (i = contents.numProperties; i >= 1; i--) {
             var it = contents.property(i);
-            if (PAINT_MATCHES[it.matchName] && !BOX_PAINT[it.name]) it.remove();
+            if (PAINT_MATCHES[it.matchName] && !BOX_PAINT[it.name] && isLegacyPaint(it)) it.remove();
         }
         paintItems(contents, "thisLayer", "Fill",
             "thisLayer.content(\"" + RIG_GROUP + "\").content(\"" + RECT_NAME + "\")");
@@ -1035,16 +1071,18 @@
 
     // Parent the top-level layers to the box (the rest ride along).
     function adopt(comp, box, layers) {
-        var top = topLevel(layers), i;
-        for (i = 0; i < top.length; i++) freeze(comp, top[i]);
+        var top = topLevel(layers), moving = [], i;
         for (i = 0; i < top.length; i++) {
-            if (!sameLayer(top[i].parent, box)) top[i].parent = box;
+            if (!sameLayer(top[i].parent, box)) moving.push(top[i]);
         }
+        for (i = 0; i < moving.length; i++) freeze(comp, moving[i]);
+        for (i = 0; i < moving.length; i++) moving[i].parent = box;
     }
 
     // Comp-space bounds of `layers` at the current time, via a temporary
     // expression (scripting has no toComp).
-    function measure(comp, box, layers) {
+    // space: measure in this layer's space instead of the comp's.
+    function measure(comp, box, layers, space) {
         var ids = [];
         for (var i = 0; i < layers.length; i++) ids.push(layers[i].index);
         var code = [
@@ -1056,7 +1094,7 @@
             '  var sr = L.sourceRectAtTime(time, ext);',
             '  var xs = [sr.left, sr.left + sr.width], ys = [sr.top, sr.top + sr.height];',
             '  for (var k = 0; k < 4; k++) {',
-            '    var p = L.toComp([xs[k % 2], ys[Math.floor(k / 2)]]);',
+            '    var p = ' + (space ? 'thisComp.layer(' + space.index + ').fromComp(' : '(') + 'L.toComp([xs[k % 2], ys[Math.floor(k / 2)]]));',
             '    l = Math.min(l, p[0]); t = Math.min(t, p[1]); r = Math.max(r, p[0]); b = Math.max(b, p[1]);',
             '  }',
             '}',
@@ -1112,35 +1150,81 @@
         return [c[0], c[1], c[2]];
     }
 
+    // Layers a 1.x box tracked by name (1.x left a layer's own parent alone,
+    // so some of them aren't parented to the box).
+    function legacyMembers(comp, box) {
+        var expr = rigParts(box).size.expression, out = [], m;
+        LEGACY_MEMBER_RE.lastIndex = 0;
+        while ((m = LEGACY_MEMBER_RE.exec(expr)) !== null) {
+            var name = m[1].replace(/\\(.)/g, "$1");
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var layer = comp.layer(i);
+                if (layer.name == name && layer.index != box.index) {
+                    if (!layer.locked && !containsLayer(out, layer)) out.push(layer);
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    // Parent links that adopting a 1.x box's members would cut.
+    function legacyCuts(comp, box) {
+        var out = [], members = legacyMembers(comp, box);
+        for (var i = 0; i < members.length; i++) {
+            if (members[i].parent && !isAncestor(box, members[i])) out.push(members[i].name + " (parented to " + members[i].parent.name + ")");
+        }
+        return out;
+    }
+
+    // Move a 1.x box's name-tracked members onto the 2.0 engine. Members
+    // outside the box's parent chain are parented to it (adoptOutside) or
+    // pinned where they are, outside the box.
+    function adoptLegacyMembers(comp, box, adoptOutside) {
+        var members = legacyMembers(comp, box), moved = [], left = [];
+        for (var i = 0; i < members.length; i++) {
+            var layer = members[i];
+            freeze(comp, layer);
+            if (isAncestor(box, layer)) continue;
+            if (adoptOutside) {
+                layer.parent = box;
+                moved.push(layer.name);
+            } else {
+                left.push(layer.name);
+            }
+        }
+        return { moved: moved, left: left };
+    }
+
     // Give a 1.x box the 2.0 engine without changing how it looks: new
-    // controls are seeded from the box's own colors, and members 1.x
-    // tracked by name (without parenting them) are parented to the box.
-    // Returns null if the box didn't need upgrading.
-    function upgradeBox(comp, box) {
+    // controls are seeded from the box's own colors. Returns null if the box
+    // didn't need upgrading.
+    function upgradeBox(comp, box, adoptOutside) {
         if (!isLegacyBox(box)) return null;
-        var t = comp.time, seed = copySettings(DEFAULTS), moved = [], m;
+        var t = comp.time, seed = copySettings(DEFAULTS);
         var fill = controlColor(box, "Fill Color", t), stroke = controlColor(box, "Stroke Color", t);
         if (fill) seed.fillColor = seed.fillColor2 = fill;
         if (stroke) seed.strokeColor = seed.strokeColor2 = stroke;
         ensureControls(box, seed, t);
-
-        var expr = rigParts(box).size.expression;
-        LEGACY_MEMBER_RE.lastIndex = 0;
-        while ((m = LEGACY_MEMBER_RE.exec(expr)) !== null) {
-            var name = m[1].replace(/\\(.)/g, "$1"), layer = null;
-            for (var i = 1; i <= comp.numLayers && !layer; i++) {
-                if (comp.layer(i).name == name && comp.layer(i).index != box.index) layer = comp.layer(i);
-            }
-            if (!layer || layer.locked) continue;
-            freeze(comp, layer);
-            if (!isAncestor(box, layer)) {
-                layer.parent = box;
-                moved.push(layer.name);
-            }
-        }
+        var result = adoptLegacyMembers(comp, box, adoptOutside !== false);
         paintBox(comp, box);
-        rigBox(comp, box);
-        return { name: box.name, moved: moved };
+        rigBox(comp, box, null, true);
+        result.name = box.name;
+        return result;
+    }
+
+    // Before upgrading 1.x boxes: ask whether members with their own parent
+    // should be parented to the box. Returns { boxIndex: adoptOutside }.
+    function askLegacy(comp, boxes) {
+        var answers = {};
+        for (var i = 0; i < boxes.length; i++) {
+            if (!isLegacyBox(boxes[i])) continue;
+            var cuts = legacyCuts(comp, boxes[i]);
+            answers[boxes[i].index] = !cuts.length || confirm(boxes[i].name + " was made with AutoBox 1.0, which left these layers " +
+                "parented to other layers:\n\n" + cuts.join("\n") + "\n\nParent them to the box so it keeps laying them out? " +
+                "(No leaves them where they are, outside the box.)", false, SCRIPT_NAME);
+        }
+        return answers;
     }
 
     // Layers whose position already has someone else's expression can't be
@@ -1155,7 +1239,10 @@
         if (!upgraded.length) return;
         var lines = [];
         for (var i = 0; i < upgraded.length; i++) {
-            lines.push(upgraded[i].name + (upgraded[i].moved.length ? " (now parented to it: " + upgraded[i].moved.join(", ") + ")" : ""));
+            var u = upgraded[i], notes = [];
+            if (u.moved.length) notes.push("now parented to it: " + u.moved.join(", "));
+            if (u.left.length) notes.push("left outside it: " + u.left.join(", "));
+            lines.push(u.name + (notes.length ? " (" + notes.join("; ") + ")" : ""));
         }
         alert("Upgraded to AutoBox " + VERSION + ", keeping their settings:\n\n" + lines.join("\n") + (more ? "\n\n" + more : ""), SCRIPT_NAME);
     }
@@ -1175,6 +1262,10 @@
         // Layers that share a parent (a controller null, or the box they're
         // in) keep it: the new box is parented to it instead.
         var top = topLevel(members), outer = sharedParent(top);
+        if (outer && isBox(outer) && isLegacyBox(outer)) {
+            alert(outer.name + " was made with AutoBox 1.0. Select it and click Apply to Box to upgrade it, then try again.", SCRIPT_NAME);
+            return;
+        }
         if (!confirmCut(linksToCut(top, outer))) return;
 
         app.beginUndoGroup("AutoBox: Create Box");
@@ -1186,12 +1277,17 @@
             fitTiming(box, members);
             var tr = box.property("ADBE Transform Group");
             tr.property("ADBE Anchor Point").setValue([0, 0]);
-            tr.property("ADBE Position").setValue(anchorPoint(measure(comp, box, members), s));
-            if (outer) {
-                box.parent = outer;
-                // Inside another box: sit above it (and its stroke) to show.
-                var above = isBox(outer) ? (strokeLayerOf(comp, outer) || outer) : null;
-                if (above && box.index > above.index) box.moveBefore(above);
+            // Built in the shared parent's space, so a box inside a rotated or
+            // scaled parent isn't counter-rotated or rescaled.
+            if (outer) box.setParentWithJump(outer);
+            tr = box.property("ADBE Transform Group");
+            tr.property("ADBE Position").setValue(anchorPoint(measure(comp, box, members, outer), s));
+            if (outer && isBox(outer)) {
+                // Sit above the outer box (and its stroke layer, if that's
+                // still right above it) so the new box shows.
+                var sl = strokeLayerOf(comp, outer);
+                var above = (sl && sl.index == outer.index - 1) ? sl : outer;
+                if (box.index > above.index) box.moveBefore(above);
             }
 
             addControls(box, s, comp.time);
@@ -1242,11 +1338,12 @@
         var added = pickMembers(sel, box);
         if (!added.length) return;
         if (!confirmCut(linksToCut(topLevel(added), box))) return;
+        var legacy = askLegacy(comp, [box]);
 
         app.beginUndoGroup("AutoBox: Add to Box");
         try {
             removeOrphanStrokeLayers(comp);
-            var upgraded = upgradeBox(comp, box);
+            var upgraded = upgradeBox(comp, box, legacy[box.index]);
             adopt(comp, box, added);
             var blocked = [];
             var members = rigBox(comp, box, blocked);
@@ -1265,10 +1362,14 @@
     function removeFromBox() {
         var comp = activeComp();
         if (!comp) return;
-        var sel = comp.selectedLayers, picked = [], i;
+        var sel = comp.selectedLayers, picked = [], inBox = [], i;
         for (i = 0; i < sel.length; i++) {
             if (isStrokeLayer(sel[i])) continue;
-            if (ownerBox(sel[i]) || hasRigExpression(sel[i])) picked.push(sel[i]);
+            var owner = ownerBox(sel[i]);
+            if (owner || hasRigExpression(sel[i])) {
+                picked.push(sel[i]);
+                inBox.push(!!owner);
+            }
         }
         if (!picked.length) {
             alert("Select the layers you want to take out of their box.", SCRIPT_NAME);
@@ -1280,7 +1381,11 @@
             // Bake everything first: unparenting one layer can change the
             // layout of the others.
             for (i = 0; i < picked.length; i++) releaseMember(comp, picked[i]);
-            for (i = 0; i < picked.length; i++) picked[i].parent = null;
+            // A 1.x member can carry a stale AutoBox expression while parented to
+            // something else (a controller null): keep that link.
+            for (i = 0; i < picked.length; i++) {
+                if (inBox[i]) picked[i].parent = null;
+            }
         } finally {
             app.endUndoGroup();
         }
@@ -1294,11 +1399,12 @@
         if (!comp) return;
         var boxes = selectedBoxes(comp), upgraded = [], blocked = [];
         if (!boxes.length) return;
+        var legacy = askLegacy(comp, boxes);
         app.beginUndoGroup("AutoBox: Apply Settings");
         try {
             removeOrphanStrokeLayers(comp);
             for (var i = 0; i < boxes.length; i++) {
-                var up = upgradeBox(comp, boxes[i]);
+                var up = upgradeBox(comp, boxes[i], legacy[boxes[i].index]);
                 if (up) {
                     upgraded.push(up);
                     continue;
@@ -1336,11 +1442,15 @@
 
         app.beginUndoGroup("AutoBox: Release");
         try {
-            for (i = 0; i < boxes.length; i++) upgradeBox(comp, boxes[i]);
             // Bake every box before removing any controls: a nested box's
-            // layout depends on its outer box and the other way round.
+            // layout depends on its outer box and the other way round. 1.x
+            // boxes also tracked members by name: bake those in place too.
             for (i = 0; i < boxes.length; i++) {
                 var box = boxes[i], members = directMembers(comp, box);
+                var legacy = legacyMembers(comp, box);
+                for (j = 0; j < legacy.length; j++) {
+                    if (!containsLayer(members, legacy[j])) members.push(legacy[j]);
+                }
                 for (j = 0; j < members.length; j++) releaseMember(comp, members[j]);
                 var parts = rigParts(box), range = layerTimeRange(comp, box);
                 bakeProperty(comp, parts.size, range);

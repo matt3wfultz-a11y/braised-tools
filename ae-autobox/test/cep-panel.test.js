@@ -389,7 +389,12 @@ test('the panel hands the keyboard back to After Effects', async () => {
   sel.focus();
   sel.value = '2';
   sel.dispatchEvent(new p.w.Event('change'));
-  assert.notEqual(p.w.document.activeElement, sel, 'menus give up focus after a pick');
+  assert.equal(p.w.document.activeElement, sel, 'keyboard users keep stepping through a menu');
+  sel.dispatchEvent(p.mouse('mousedown', 1));
+  sel.value = '3';
+  sel.dispatchEvent(new p.w.Event('change'));
+  assert.notEqual(p.w.document.activeElement, sel, 'after a mouse pick the menu gives up focus');
+  p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
 
   const hot = p.$('.hot[data-key="gap"]');
   hot.focus();
@@ -400,8 +405,21 @@ test('the panel hands the keyboard back to After Effects', async () => {
 
   p.$('[data-action="select"]').dispatchEvent(p.mouse('mousedown', 1));
   assert.ok(p.w.document.body.classList.contains('pointer'), 'mouse users get no focus rings');
+
+  // A mouse click on Reset leaves focus there; Space must still reach AE.
+  const reset = p.$('.reset[data-group="box"]');
+  reset.dispatchEvent(p.mouse('mousedown', 1));
+  reset.focus();
+  const codes = JSON.parse(p.cep.keyInterest[p.cep.keyInterest.length - 1]).map((k) => k.keyCode);
+  assert.ok(!codes.includes(32) && !codes.includes(49), 'no Space after a mouse click');
+  assert.ok(codes.includes(9) || codes.includes(48), 'Tab still moves focus');
+  reset.blur();
+
   p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
   assert.ok(!p.w.document.body.classList.contains('pointer'));
+  reset.focus();
+  const kb = JSON.parse(p.cep.keyInterest[p.cep.keyInterest.length - 1]).map((k) => k.keyCode);
+  assert.ok(kb.includes(32) || kb.includes(49), 'keyboard users can press Space on Reset');
 });
 
 test('colors follow After Effects brightness', async () => {
@@ -416,13 +434,42 @@ test('colors follow After Effects brightness', async () => {
   };
   const dark = await at(29);
   assert.equal(dark.light, false);
-  assert.equal(dark.hot, '#5eaaf7');
+  assert.equal(dark.hot, 'rgb(94,170,247)', 'After Effects\' own blue at default brightness');
   assert.equal(dark.line, 'rgb(14,14,14)');
   assert.equal(dark.size, '10px');
-  const mid = await at(110);
-  assert.equal(mid.light, false);
-  assert.equal(mid.hot, '#b9dcff', 'mid-gray UI gets a lighter blue to stay readable');
-  const light = await at(184);
-  assert.equal(light.light, true);
-  assert.equal(light.hot, '#0d5dc4');
+  assert.equal((await at(184)).light, true);
+
+  const lum = (c) => {
+    const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const parse = (css) => css.match(/\d+/g).map(Number);
+  for (let gray = 20; gray <= 240; gray += 10) {
+    const t = await at(gray);
+    const hot = parse(t.hot), head = t.light ? gray - 16 : gray + 19;
+    assert.ok(ratio(hot, [gray, gray, gray]) >= 3, `values readable on the panel at gray ${gray}`);
+    assert.ok(ratio(hot, [head, head, head]) >= 3, `Reset readable on the header at gray ${gray}`);
+  }
+});
+
+test('huge numbers are rejected and quick clicks still open the editor', async () => {
+  const host = createHost();
+  scene(host);
+  const p = await openPanel(host);
+  p.$('#fill-type').value = '2';
+  p.$('#fill-type').dispatchEvent(new p.w.Event('change'));
+  p.type('fillAngle', '1e308');
+  assert.equal(p.settings().fillAngle, 100000, 'clamped instead of becoming Infinity');
+  assert.match(p.$('.hot[data-key="fillAngle"]').textContent, /^277x\+280\.0\u00b0$/);
+  p.type('fillAngle', 'Infinity');
+  assert.equal(p.settings().fillAngle, 100000, 'non-finite input is rejected');
+  p.type('padding', '1e9');
+  assert.equal(p.settings().padding, 100000, 'clamped to the field range');
+
+  // macOS can report a move with no buttons after a quick click: still a click.
+  const hot = p.$('.hot[data-key="gap"]');
+  hot.dispatchEvent(p.mouse('mousedown', 50));
+  p.w.document.dispatchEvent(p.mouse('mousemove', 51, 0, { buttons: 0 }));
+  assert.ok(hot.querySelector('input'), 'the editor opens');
 });

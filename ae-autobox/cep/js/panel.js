@@ -313,17 +313,26 @@
   }
 
   function commitHot(el, v) {
-    var key = el.getAttribute('data-key');
-    set(key, round(clampFor(el, v), num(el, 'data-decimals', 0)));
+    var r = round(clampFor(el, v), num(el, 'data-decimals', 0));
+    if (!isFinite(r)) {
+      render();
+      return;
+    }
+    set(el.getAttribute('data-key'), r);
   }
 
   // Track a drag on the document. onMove gets every mousemove; onEnd gets
   // true for a real mouseup, false if the button was released somewhere the
   // panel couldn't see (outside it, or the window lost focus).
   function track(onMove, onEnd) {
+    // On macOS, a move processed after a quick click can already report no
+    // buttons: only treat that as a lost release once a pressed move was seen.
+    var pressed = false;
     function move(ev) {
-      if (ev.buttons === 0) {
-        end(false);
+      if (ev.buttons) {
+        pressed = true;
+      } else {
+        end(!pressed);
         return;
       }
       onMove(ev);
@@ -486,8 +495,9 @@
     each('select[data-key]', function (el) {
       el.addEventListener('change', function () {
         set(el.getAttribute('data-key'), parseInt(el.value, 10));
-        // Hand the keyboard back to After Effects (a focused menu keeps it).
-        el.blur();
+        // After a mouse pick, hand the keyboard back to After Effects (a
+        // focused menu keeps it); keyboard users keep stepping through it.
+        if (document.body.classList.contains('pointer')) el.blur();
       });
     });
     each('input[type="checkbox"][data-key]', function (el) {
@@ -548,8 +558,8 @@
   // keys the panel uses; everything else (Space to preview...) stays with AE.
   // ---------------------------------------------------------------------
   var KEY_CODES = /Mac/.test(navigator.platform) ?
-    { Enter: [36, 76], Space: [49], Left: [123], Right: [124], Down: [125], Up: [126] } :
-    { Enter: [13], Space: [32], Left: [37], Up: [38], Right: [39], Down: [40] };
+    { Enter: [36, 76], Space: [49], Tab: [48], Left: [123], Right: [124], Down: [125], Up: [126] } :
+    { Enter: [13], Space: [32], Tab: [9], Left: [37], Up: [38], Right: [39], Down: [40] };
 
   function keyInterest(names) {
     var list = [];
@@ -563,10 +573,13 @@
 
   function bindKeyboard() {
     if (cep && cep.registerKeyEventsInterest) {
+      // Space and Enter only for keyboard users: after a mouse click the
+      // clicked control keeps focus, and Space must still reach AE (preview).
       document.addEventListener('focusin', function (e) {
-        var t = e.target, names = null;
-        if (t.classList && t.classList.contains('hot')) names = ['Enter', 'Left', 'Right', 'Up', 'Down'];
-        else if (t.matches && t.matches('.fx > .head, .reset, .twirl')) names = ['Enter', 'Space'];
+        var t = e.target, names = null, keyboard = !document.body.classList.contains('pointer');
+        if (t.classList && t.classList.contains('hot')) names = ['Enter', 'Tab', 'Left', 'Right', 'Up', 'Down'];
+        else if (t.matches && t.matches('.fx > .head, .reset, .twirl')) names = keyboard ? ['Enter', 'Space', 'Tab'] : ['Tab'];
+        else if (t.matches && t.matches('button, input[type="checkbox"]')) names = ['Tab'];
         cep.registerKeyEventsInterest(names ? keyInterest(names) : '');
       });
       document.addEventListener('focusout', function () { cep.registerKeyEventsInterest(''); });
@@ -587,6 +600,28 @@
     return 'rgb(' + ch(c.r) + ',' + ch(c.g) + ',' + ch(c.b) + ')';
   }
 
+  function luminance(c) {
+    function lin(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  }
+
+  function contrast(a, b) {
+    var x = luminance(a), y = luminance(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  }
+
+  // Blend `base` toward white (lighten) or black until it reaches 3:1
+  // against every background in `against`.
+  function readable(base, against, lighten) {
+    for (var f = 0; f <= 1.0001; f += 0.05) {
+      var c = base.map(function (v) { return Math.round(lighten ? v + (255 - v) * f : v * (1 - f)); });
+      if (against.every(function (bg) { return contrast(c, bg) >= 3; })) return c;
+    }
+    return lighten ? [255, 255, 255] : [0, 0, 0];
+  }
+
+  function rgb(c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
+
   function applyTheme() {
     if (!cep) return;
     try {
@@ -597,6 +632,9 @@
       var put = function (k, v) { root.style.setProperty(k, v); };
       root.classList.toggle('light', light);
       put('--bg', shade(bg, 0));
+      var g = function (d) { return [bg.r, bg.g, bg.b].map(function (v) { return Math.max(0, Math.min(255, Math.round(v + d))); }); };
+      var surfaces = light ? [g(0), g(-16)] : [g(0), g(19)];
+      var hot = readable(light ? [13, 93, 196] : [94, 170, 247], surfaces, !light);
       if (light) {
         put('--head-bg', shade(bg, -16));
         put('--line', shade(bg, -48));
@@ -608,8 +646,8 @@
         put('--muted', shade(bg, -95));
         put('--twirl', shade(bg, -110));
         put('--text', '#1b1b1b');
-        put('--hot', '#0d5dc4');
-        put('--hot-hover', '#08458f');
+        put('--hot', rgb(hot));
+        put('--hot-hover', rgb(readable(hot.map(function (v) { return Math.round(v * 0.75); }), surfaces, false)));
       } else {
         var mid = lum > 0.3;
         put('--head-bg', shade(bg, 19));
@@ -622,10 +660,12 @@
         put('--muted', shade(bg, mid ? 120 : 95));
         put('--twirl', shade(bg, 120));
         put('--text', mid ? '#ffffff' : '#ebebeb');
-        put('--hot', mid ? '#b9dcff' : '#5eaaf7');
-        put('--hot-hover', mid ? '#e1f0ff' : '#8cc4ff');
+        put('--hot', rgb(hot));
+        put('--hot-hover', rgb(readable(hot.map(function (v) { return Math.round(v + (255 - v) * 0.3); }), surfaces, true)));
       }
-      if (skin.baseFontFamily) put('--font', '"' + skin.baseFontFamily + '", -apple-system, "Segoe UI", sans-serif');
+      if (skin.baseFontFamily && !/^\./.test(skin.baseFontFamily)) {
+        put('--font', '"' + skin.baseFontFamily + '", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif');
+      }
       if (skin.baseFontSize) put('--font-size', skin.baseFontSize + 'px');
     } catch (e) {}
   }

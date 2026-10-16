@@ -288,10 +288,8 @@ button {
   min-height: 22px;
   padding: 2px 12px;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
+.actions button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button:hover { background: var(--control-hover); }
 button:focus { outline: none; border-color: var(--hot); }
 button:disabled { opacity: 0.5; cursor: default; }

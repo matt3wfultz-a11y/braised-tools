@@ -40,6 +40,11 @@ Boxes made with AutoBox 1.0 keep working. To give one the 2.0 engine
 **Apply to Box**. The first click only upgrades the box and keeps its settings.
 Click again if you also want to apply the panel's settings to it.
 
+AutoBox 1.0 left a layer's own parent alone, for example a controller null. If
+an old box has layers like that, Apply asks whether to parent them to the box
+or leave them where they are. Release and Remove never cut those links. To
+nest a new box inside an old one, upgrade the old box first.
+
 ## Use
 
 1. Select the layers you want boxed: text, shapes, footage or precomps.

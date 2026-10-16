@@ -62,6 +62,12 @@ function item(layer, groupName, name) {
   return (mn) => new Prop(c.children.find((x) => x.matchName === mn));
 }
 
+function rigParts(box) {
+  const g = box.contentsState.children.find((c) => c.name === 'AutoBox');
+  const rect = g.children[0].children.find((c) => c.matchName === 'ADBE Vector Shape - Rect');
+  return { size: rect.children[0].expression };
+}
+
 function effectProp(layer, effectName, mn) {
   const e = layer.effectsState.children.find((c) => c.name === effectName);
   return new Prop(e.children.find((c) => c.matchName === mn));
@@ -751,19 +757,30 @@ test('boxing layers that sit in a stacked box nests the new box in it, without j
   near(cb.b, rb.b + 32, 'card wraps the row');
 });
 
-test('a hidden stack member with visible children keeps its spot', () => {
+test('hidden stack members: collapse when nothing of them shows, keep their slot when their children do', () => {
   const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const dot = comp.layers.addShapeMember('Dot', { position: [180, 400], rect: { left: -5, top: -5, width: 10, height: 10 } });
+  const comp = host.newComp();
+  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
+  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
+  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
+  const dot = comp.layers.addShapeMember('Dot', { position: [180, 360], rect: { left: -5, top: -5, width: 10, height: 10 } });
   dot.parent = sub;
-  const box = create(host, comp, [title, sub, dot], { layout: 2 });
-  const d0 = dot.compBounds(), b0 = box.boxCompBounds();
-  sub.enabled = false;
-  const b1 = box.boxCompBounds();
-  near(b1.b - b1.t, b0.b - b0.t - 36 - 16, 'the hidden member takes no space');
-  const d1 = dot.compBounds();
-  near(d1.t, d0.t, 'its visible child stays put');
-  near(d1.l, d0.l);
+  const box = create(host, comp, [title, sub, cap, dot], { layout: 2 });
+  const d0 = dot.compBounds(), c0 = cap.compBounds(), b0 = box.boxCompBounds();
+
+  sub.enabled = false; // its Dot is still visible
+  near(box.boxCompBounds().b, b0.b, 'the box keeps the slot');
+  near(cap.compBounds().t, c0.t, 'the next item does not move up under the visible child');
+  near(dot.compBounds().t, d0.t, 'the visible child stays put');
+
+  dot.enabled = false; // now nothing of Subtitle shows
+  near(box.boxCompBounds().b, b0.b - 36 - 16, 'the slot collapses');
+  near(cap.compBounds().t, c0.t - 36 - 16);
+
+  title.enabled = false;
+  cap.enabled = false;
+  const s0 = sub.tprop('ADBE Position').value.slice(0, 2);
+  assert.ok(s0.every(Number.isFinite), 'all members hidden: still a stable position');
 });
 
 test('Apply to Box leaves animated controls alone', () => {
@@ -842,4 +859,142 @@ test('a layer with its own position expression is reported, not silently left be
   assert.equal(host.alerts.length, 1);
   assert.match(host.alerts[0], /already have an expression on Position[\s\S]*Subtitle/);
   assert.equal(sub.tprop('ADBE Position').expression, 'value;', 'their expression is kept');
+});
+
+test('Create Box inside a box made by AutoBox 1.0 asks for an upgrade first', () => {
+  const host = createHost();
+  globalThis.AUTOBOX_TEST = {};
+  vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'fixtures', 'AutoBox-1.0.0.jsx'), 'utf8'));
+  const v1 = globalThis.AUTOBOX_TEST.api;
+  const { comp, title, sub } = scene(host);
+  comp.select(title, sub);
+  v1.createBox(Object.assign({}, v1.DEFAULTS, { layout: 2 }));
+  const card = comp.layer('AutoBox 1');
+  const before = rigParts(card).size;
+  host.alerts.length = 0;
+  comp.select(title, sub);
+  host.api.createBox(settings(host));
+  assert.match(host.alerts[0], /AutoBox 1 was made with AutoBox 1\.0/);
+  assert.ok(!comp._layers.some((l) => l.name === 'AutoBox 2'), 'nothing created');
+  assert.equal(rigParts(card).size, before, 'the 1.0 box is untouched');
+});
+
+test('Release and Remove on 1.0 boxes keep controller links; Apply asks before cutting them', () => {
+  const build = () => {
+    const host = createHost();
+    globalThis.AUTOBOX_TEST = {};
+    vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'fixtures', 'AutoBox-1.0.0.jsx'), 'utf8'));
+    const v1 = globalThis.AUTOBOX_TEST.api;
+    const comp = host.newComp();
+    const ctrl = comp.layers.addNull({ name: 'Ctrl', position: [100, 100] });
+    const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
+    const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
+    sub.parent = ctrl;
+    comp.select(title, sub);
+    v1.createBox(Object.assign({}, v1.DEFAULTS, { layout: 2 }));
+    host.alerts.length = 0;
+    return { host, comp, ctrl, sub, title, box: comp.layer('AutoBox 1') };
+  };
+
+  let t = build();
+  const at = t.sub.compBounds();
+  t.comp.select(t.box);
+  t.host.api.releaseBoxes();
+  assert.equal(t.sub.parent, t.ctrl, 'Release keeps the controller link');
+  assert.equal(t.sub.tprop('ADBE Position').expression, '');
+  bounds(t.sub.compBounds(), at.l, at.t, at.r, at.b, 'baked where it was');
+  assert.ok(!t.comp._layers.some((l) => l.name === 'AutoBox 1 Stroke'), 'no new stroke layer for a released box');
+
+  t = build();
+  t.comp.select(t.sub);
+  t.host.api.removeFromBox();
+  assert.equal(t.sub.parent, t.ctrl, 'Remove keeps the controller link');
+  assert.equal(t.sub.tprop('ADBE Position').expression, '');
+
+  t = build();
+  t.host.confirmAnswer = false;
+  t.comp.select(t.box);
+  t.host.api.applySettings(settings(t.host));
+  assert.match(t.host.confirms[0], /Subtitle \(parented to Ctrl\)/);
+  assert.equal(t.sub.parent, t.ctrl, 'declining keeps the link');
+  assert.match(t.host.alerts[0], /left outside it: Subtitle/);
+});
+
+test('a hidden nested box drops out of a Free outer box, stroke and all', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const inner = create(host, comp, [sub], { padding: 10, strokeWidth: 8 });
+  const outer = create(host, comp, [title, inner], { padding: 20 });
+  const full = outer.boxCompBounds();
+  inner.enabled = false; // its Subtitle stays visible
+  const ob = outer.boxCompBounds(), tb = title.compBounds(), sb = sub.compBounds();
+  bounds(ob, Math.min(tb.l, sb.l) - 20, tb.t - 20, Math.max(tb.r, sb.r) + 20, sb.b + 20,
+    'wraps what still shows, without the hidden box\'s padding or stroke');
+  assert.ok(ob.b < full.b);
+});
+
+test('a box nested in a rotated, scaled box is built square to it', () => {
+  const host = createHost();
+  const comp = host.newComp();
+  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
+  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
+  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
+  const card = create(host, comp, [title, sub, cap], { layout: 2 });
+  card.tprop('ADBE Rotate Z').setValue(30);
+  card.tprop('ADBE Scale').setValue([50, 50, 100]);
+  comp.select(sub, cap);
+  host.api.createBox(settings(host, { padding: 10 }));
+  const row = comp.layer('AutoBox 2');
+  assert.equal(row.parent, card);
+  near(row.tprop('ADBE Rotate Z').value, 0, 'no counter-rotation');
+  near(row.tprop('ADBE Scale').value.slice(0, 2), [100, 100], 'no counter-scale');
+  near(sub.tprop('ADBE Rotate Z').value, 0);
+});
+
+test('Add to Box with the whole box selected keeps existing members\' keyframes', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title]);
+  const pos = title.tprop('ADBE Position');
+  const v = pos.value;
+  pos.setValueAtTime(0, v);
+  pos.setValueAtTime(1, [v[0] + 50, v[1], 0]);
+  comp.select(box, comp.layer('AutoBox 1 Stroke'), title, sub);
+  host.api.addToBox();
+  assert.equal(pos.numKeys, 2, 'keyframes untouched');
+  assert.equal(sub.parent, box);
+});
+
+test('the expression warning only appears for boxes that stack', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  sub.tprop('ADBE Position').expression = 'value;';
+  comp.select(title, sub);
+  host.api.createBox(settings(host, { layout: 1 }));
+  assert.deepEqual(host.alerts, [], 'Free layout never moves layers');
+});
+
+test('paint the user adds to the box is kept', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title]);
+  const contents = new Prop(box.contentsState.children[0].children[0]);
+  contents.addProperty('ADBE Vector Graphic - Stroke').name = 'Inner Glow Stroke';
+  comp.select(box);
+  host.api.applySettings(settings(host));
+  assert.ok(box.contentsState.children[0].children[0].children.some((c) => c.name === 'Inner Glow Stroke'));
+});
+
+test('nesting ignores an outer stroke layer the user moved', () => {
+  const host = createHost();
+  const comp = host.newComp();
+  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
+  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
+  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
+  create(host, comp, [title, sub, cap], { layout: 2 });
+  comp.layer('AutoBox 1 Stroke').moveToBeginning();
+  comp.select(sub, cap);
+  host.api.createBox(settings(host));
+  const row = comp.layer('AutoBox 2');
+  assert.ok(row.index > sub.index && row.index > cap.index, 'still behind its own layers');
 });
