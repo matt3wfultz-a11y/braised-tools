@@ -12,7 +12,7 @@ const vm = require('vm');
 const zlib = require('zlib');
 const acorn = require('acorn');
 const { JSDOM } = require('jsdom');
-const { createHost, SCRIPT_PATH } = require('./ae-mock');
+const { createHost, Prop, SCRIPT_PATH } = require('./ae-mock');
 const { stageExtension } = require('../scripts/build-zxp');
 
 const ROOT = path.join(__dirname, '..');
@@ -22,6 +22,15 @@ const HTML = fs.readFileSync(path.join(CEP, 'index.html'), 'utf8');
 const EXT_DIR = stageExtension(fs.mkdtempSync(path.join(os.tmpdir(), 'autobox ext ')));
 
 const tick = () => new Promise((r) => setImmediate(r));
+
+function near(actual, expected, msg) {
+  if (Array.isArray(expected)) {
+    assert.equal(actual.length, expected.length, msg);
+    expected.forEach((e, i) => near(actual[i], e, `${msg || ''}[${i}]`));
+    return;
+  }
+  assert.ok(Math.abs(actual - expected) < 1e-6, `${msg || 'value'}: expected ${expected}, got ${actual}`);
+}
 
 function fakeCep() {
   return {
@@ -74,6 +83,12 @@ async function openPanel(host, { cep = fakeCep(), storage, twirls } = {}) {
       await tick();
       await tick();
     },
+    // Pick a menu item with the keyboard (the menu keeps focus).
+    choose(sel, value) {
+      const el = $(sel);
+      el.value = String(value);
+      el.dispatchEvent(new w.Event('change'));
+    },
     // Click a hot-text value (no drag) and type into the field that opens.
     type(key, value, finishKey = 'Enter') {
       const hot = $(`.hot[data-key="${key}"]`);
@@ -97,6 +112,24 @@ async function openPanel(host, { cep = fakeCep(), storage, twirls } = {}) {
     mouse,
   };
   return p;
+}
+
+// A shape item in the box's AutoBox group: its switch and its values.
+function paint(box, name) {
+  const group = box.contentsState.children.find((c) => c.name === 'AutoBox');
+  const item = group.children.find((c) => c.matchName === 'ADBE Vectors Group').children.find((c) => c.name === name);
+  assert.ok(item, `${box.name} has ${name}`);
+  return { enabled: item.enabled, value: (mn) => new Prop(item.children.find((c) => c.matchName === mn)).value };
+}
+
+function sizeExpression(box) {
+  const group = box.contentsState.children.find((c) => c.name === 'AutoBox');
+  const rect = group.children.find((c) => c.matchName === 'ADBE Vectors Group').children.find((c) => c.matchName === 'ADBE Vector Shape - Rect');
+  return rect.children[0].expression;
+}
+
+function hasEffect(layer, name) {
+  return layer.effectsState.children.some((c) => c.name === name);
 }
 
 function scene(host) {
@@ -157,15 +190,13 @@ test('the panel loads AutoBox.jsx into After Effects and creates a box', async (
   assert.equal(typeof globalThis.AutoBoxHost, 'object');
   assert.equal(globalThis.AUTOBOX_CEP, undefined, 'load flag is cleared');
 
-  await p.click('.seg[data-key="layout"] button[data-value="2"]');
-  assert.ok(p.$('.seg[data-key="layout"] button[data-value="2"]').classList.contains('on'));
-  assert.equal(p.$('#layout-name').textContent, 'Vertical');
-  assert.ok(!p.w.document.body.classList.contains('is-free'));
   p.type('padding', 20);
   assert.equal(p.$('.hot[data-key="padding"]').textContent, '20');
   p.type('radius', -5);
   assert.equal(p.$('.hot[data-key="radius"]').textContent, '0', 'min is enforced');
+  assert.ok(p.$('.fx[data-twirl="g-box"] .anchor'), 'Box Anchor is in the Box section');
   await p.click('.anchor button[data-value="5"]');
+  assert.ok(p.$('.anchor button[data-value="5"]').classList.contains('on'));
   assert.equal(p.$('#anchor-name').textContent, 'Center');
 
   comp.select(title, sub);
@@ -173,16 +204,17 @@ test('the panel loads AutoBox.jsx into After Effects and creates a box', async (
   assert.deepEqual(host.alerts, []);
   assert.equal(p.status().textContent, '');
   const box = comp.layer('AutoBox 1');
-  assert.equal(box.effectValue('Layout'), 2);
   assert.equal(box.effectValue('Padding'), 20);
   assert.equal(box.effectValue('Box Anchor'), 5);
   assert.equal(box.boxRect().roundness, 0);
+  near(paint(box, 'Fill').value('ADBE Vector Fill Color'), [27 / 255, 54 / 255, 67 / 255, 1], 'the starting look is native');
   assert.equal(title.parent, box);
   assert.equal(sub.parent, box);
+  assert.equal(title.tprop('ADBE Position').expression, '', 'the layers get no expressions');
 
   const saved = JSON.parse(p.w.localStorage.getItem('braised.autobox.settings'));
   assert.equal(saved.padding, 20);
-  assert.equal(saved.layout, 2);
+  assert.equal(saved.anchor, 5);
 });
 
 test('hot text: drag to scrub (Shift x10, Ctrl/Cmd x0.1), arrows to nudge, Escape cancels, Tab moves on', async () => {
@@ -190,14 +222,14 @@ test('hot text: drag to scrub (Shift x10, Ctrl/Cmd x0.1), arrows to nudge, Escap
   scene(host);
   const p = await openPanel(host);
   const v = (k) => p.settings()[k];
-  p.scrub('gap', [101, 102, 113]);
-  assert.equal(v('gap'), 26, 'starts after a 3px dead zone, then 1 per pixel');
-  p.scrub('gap', [110], { shiftKey: true });
-  assert.equal(v('gap'), 96);
-  p.scrub('gap', [70], { ctrlKey: true });
-  assert.equal(v('gap'), 93);
-  p.scrub('gap', [0]);
-  assert.equal(v('gap'), -4, 'gap may go negative');
+  p.scrub('extraTop', [101, 102, 113]);
+  assert.equal(v('extraTop'), 10, 'starts after a 3px dead zone, then 1 per pixel');
+  p.scrub('extraTop', [110], { shiftKey: true });
+  assert.equal(v('extraTop'), 80);
+  p.scrub('extraTop', [70], { ctrlKey: true });
+  assert.equal(v('extraTop'), 77);
+  p.scrub('extraTop', [0]);
+  assert.equal(v('extraTop'), -20, 'extra padding may go negative');
   p.scrub('radius', [0]);
   assert.equal(v('radius'), 0, 'radius stops at 0');
   assert.ok(!p.w.document.body.classList.contains('scrubbing'));
@@ -230,8 +262,7 @@ test('sliders, angle dials and twirl-downs', async () => {
   assert.equal(slider.querySelector('.thumb').style.left, '50%');
   assert.equal(p.$('.hot[data-key="padding"]').textContent, '100');
 
-  p.$('#fill-type').value = '2';
-  p.$('#fill-type').dispatchEvent(new p.w.Event('change'));
+  p.choose('#fill-type', 2);
   const dial = p.$('.dial[data-key="fillAngle"]');
   p.rect(dial, { left: 0, top: 0, width: 20, height: 20 });
   dial.dispatchEvent(p.mouse('mousedown', 10, 20));
@@ -242,39 +273,45 @@ test('sliders, angle dials and twirl-downs', async () => {
   p.type('fillAngle', 450);
   assert.equal(p.$('.hot[data-key="fillAngle"]').textContent, '1x+90.0\u00b0');
 
-  const row = p.$('.prop[data-twirl="s-gap"]');
-  assert.ok(!row.classList.contains('open'), 'Gap slider starts closed');
-  await p.click('.prop[data-twirl="s-gap"] > .twirl');
+  const row = p.$('.prop[data-twirl="s-morphTime"]');
+  assert.ok(!row.classList.contains('open'), 'Morph Time slider starts closed');
+  await p.click('.prop[data-twirl="s-morphTime"] > .twirl');
   assert.ok(row.classList.contains('open'));
-  assert.equal(JSON.parse(p.w.localStorage.getItem('braised.autobox.twirls'))['s-gap'], true);
-  await p.click('.fx[data-twirl="g-layout"] > .head');
-  assert.ok(!p.$('.fx[data-twirl="g-layout"]').classList.contains('open'), 'sections collapse');
+  assert.equal(JSON.parse(p.w.localStorage.getItem('braised.autobox.twirls'))['s-morphTime'], true);
+  await p.click('.fx[data-twirl="g-animation"] > .head');
+  assert.ok(!p.$('.fx[data-twirl="g-animation"]').classList.contains('open'), 'sections collapse');
 });
 
-test('fill and stroke switch between a color swatch and a gradient bar', async () => {
+test('fill and stroke show a color swatch for solids and a note for gradients', async () => {
   const host = createHost();
-  scene(host);
+  const { comp, title } = scene(host);
   const p = await openPanel(host);
-  const solidRow = p.$('.swatch[data-pick="fillColor"]').closest('.prop');
-  const gradientRow = p.$('.gradient[data-from="fillColor"]').closest('.prop');
-  const angleRow = p.$('.dial[data-key="fillAngle"]').closest('.prop');
-  assert.ok(!solidRow.hidden && gradientRow.hidden && angleRow.hidden);
-  p.$('#fill-type').value = '3';
-  p.$('#fill-type').dispatchEvent(new p.w.Event('change'));
-  assert.ok(solidRow.hidden && !gradientRow.hidden && angleRow.hidden, 'radial gradients have no angle');
-  assert.match(p.$('.gradient[data-from="fillColor"] .ramp').style.backgroundImage, /radial-gradient/);
-  p.$('#fill-type').value = '2';
-  p.$('#fill-type').dispatchEvent(new p.w.Event('change'));
-  assert.ok(!angleRow.hidden);
-  assert.match(p.$('.gradient[data-from="fillColor"] .ramp').style.backgroundImage, /linear-gradient/);
+  assert.equal(p.$('[data-key="fillColor2"], [data-key="strokeColor2"], .gradient, [data-swap]'), null,
+    'scripts cannot set gradient colors, so the panel has none');
+  ['fill', 'stroke'].forEach((kind) => {
+    const solidRow = p.$(`.swatch[data-pick="${kind}Color"]`).closest('.prop');
+    const noteRow = p.$(`.prop[data-show="${kind}Type:2,3"]`);
+    const angleRow = p.$(`.dial[data-key="${kind}Angle"]`).closest('.prop');
+    assert.equal(noteRow.textContent.trim(), 'Gradient colors: use Edit Gradient in the box\'s Contents.');
+    assert.ok(!solidRow.hidden && noteRow.hidden && angleRow.hidden, `${kind}: Solid shows the swatch`);
+    p.choose(`#${kind}-type`, 3);
+    assert.ok(solidRow.hidden && !noteRow.hidden && angleRow.hidden, `${kind}: radial gradients show the note, no angle`);
+    p.choose(`#${kind}-type`, 2);
+    assert.ok(solidRow.hidden && !noteRow.hidden && !angleRow.hidden, `${kind}: linear gradients have an angle`);
+  });
 
-  const before = p.settings();
-  const [a, b] = [Array.from(before.fillColor), Array.from(before.fillColor2)];
-  await p.click('[data-swap="fillColor,fillColor2"]');
-  assert.deepEqual(Array.from(p.settings().fillColor), b);
-  assert.deepEqual(Array.from(p.settings().fillColor2), a);
-  await p.click('.gradient[data-from="fillColor"] .stop.b');
-  assert.deepEqual(Array.from(p.settings().fillColor2), [0x33 / 255, 0x66 / 255, 0x99 / 255]);
+  // The box starts with its gradients switched on instead of the solids.
+  p.choose('#fill-type', 3);
+  p.type('strokeWidth', 4);
+  comp.select(title);
+  await p.click('[data-action="create"]');
+  assert.deepEqual(host.alerts, []);
+  const box = comp.layer('AutoBox 1');
+  assert.ok(!paint(box, 'Fill').enabled && paint(box, 'Gradient Fill').enabled);
+  assert.equal(paint(box, 'Gradient Fill').value('ADBE Vector Grad Type'), 2, 'radial');
+  assert.ok(!paint(box, 'Stroke').enabled && paint(box, 'Gradient Stroke').enabled);
+  assert.equal(paint(box, 'Gradient Stroke').value('ADBE Vector Grad Type'), 1, 'linear');
+  assert.equal(paint(box, 'Gradient Stroke').value('ADBE Vector Stroke Width'), 4);
 });
 
 test('colors, Apply to Box, Select Members and Release work from the panel', async () => {
@@ -284,40 +321,147 @@ test('colors, Apply to Box, Select Members and Release work from the panel', asy
   comp.select(title, sub);
   await p.click('[data-action="create"]');
   const box = comp.layer('AutoBox 1');
+  assert.ok(!paint(box, 'Stroke').enabled, 'no stroke at width 0');
 
   await p.click('.swatch[data-pick="fillColor"]');
   assert.equal(p.$('.swatch[data-pick="fillColor"]').style.backgroundColor, 'rgb(51, 102, 153)');
   p.type('strokeWidth', 3);
+  p.type('radius', 8);
   comp.select(box);
   await p.click('[data-action="apply"]');
-  assert.deepEqual(box.effectValue('Fill Color'), [0x33 / 255, 0x66 / 255, 0x99 / 255, 1]);
-  assert.equal(box.effectValue('Stroke Width'), 3);
+  assert.equal(p.status().textContent, '');
+  near(paint(box, 'Fill').value('ADBE Vector Fill Color'), [0x33 / 255, 0x66 / 255, 0x99 / 255, 1]);
+  assert.ok(paint(box, 'Stroke').enabled);
+  assert.equal(paint(box, 'Stroke').value('ADBE Vector Stroke Width'), 3);
+  assert.equal(box.boxRect().roundness, 8);
 
   await p.click('[data-action="select"]');
   assert.deepEqual(comp.selectedLayers.map((l) => l.name), ['Title', 'Subtitle']);
 
   comp.select(box);
+  const before = box.boxRect();
   await p.click('[data-action="release"]');
   assert.equal(host.confirms.length, 1);
-  assert.equal(title.tprop('ADBE Position').expression, '');
   assert.deepEqual(host.alerts, []);
+  assert.equal(sizeExpression(box), '', 'the size is baked');
+  assert.deepEqual(box.boxRect(), before);
+  assert.ok(!hasEffect(box, 'Padding') && !hasEffect(box, 'Smart Animate'), 'the rig is removed');
 });
 
-test('settings are remembered and each section resets to its defaults', async () => {
+test('the Animation section sets Smart Animate, Morph Time and Morph Ease', async () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const p = await openPanel(host);
+  const v = (k) => p.settings()[k];
+  const hot = p.$('.hot[data-key="morphTime"]');
+  assert.ok(p.$('#smart-animate').checked);
+  assert.equal(hot.textContent, '0.40', 'seconds, two decimals');
+  assert.equal(p.$('#morph-ease').value, '4');
+
+  p.$('#smart-animate').click();
+  assert.equal(v('smartAnimate'), 0);
+  p.type('morphTime', 1.234);
+  assert.equal(v('morphTime'), 1.23);
+  assert.equal(hot.textContent, '1.23');
+  p.type('morphTime', 99);
+  assert.equal(v('morphTime'), 60, 'at most a minute');
+  p.type('morphTime', -1);
+  assert.equal(v('morphTime'), 0, 'never negative');
+
+  p.type('morphTime', 0.4);
+  p.scrub('morphTime', [101, 102, 113]);
+  assert.equal(v('morphTime'), 0.5, '0.01 s per pixel');
+  p.scrub('morphTime', [110], { shiftKey: true });
+  assert.equal(v('morphTime'), 1.2);
+  hot.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  assert.equal(v('morphTime'), 1.21);
+
+  await p.click('.prop[data-twirl="s-morphTime"] > .twirl');
+  const slider = p.$('.slider[data-key="morphTime"]');
+  p.rect(slider.querySelector('.track'), { left: 0, width: 200 });
+  slider.dispatchEvent(p.mouse('mousedown', 50));
+  p.w.document.dispatchEvent(p.mouse('mouseup', 50));
+  assert.equal(v('morphTime'), 0.5, 'the slider runs from 0 to 2 s');
+  assert.equal(slider.querySelector('.thumb').style.left, '25%');
+  p.choose('#morph-ease', 2);
+  assert.equal(v('morphEase'), 2);
+
+  comp.select(title, sub);
+  await p.click('[data-action="create"]');
+  assert.deepEqual(host.alerts, []);
+  const box = comp.layer('AutoBox 1');
+  assert.equal(box.effectValue('Smart Animate'), 0);
+  assert.equal(box.effectValue('Morph Time'), 0.5);
+  assert.equal(box.effectValue('Morph Ease'), 2);
+
+  p.type('padding', 10);
+  await p.click('.reset[data-group="animation"]');
+  assert.deepEqual([v('smartAnimate'), v('morphTime'), v('morphEase')], [1, 0.4, 4]);
+  assert.ok(p.$('#smart-animate').checked);
+  assert.equal(hot.textContent, '0.40');
+  assert.equal(p.$('#morph-ease').value, '4');
+  assert.equal(v('padding'), 10, 'other sections are untouched');
+  assert.equal(JSON.parse(p.w.localStorage.getItem('braised.autobox.settings')).morphTime, 0.4);
+});
+
+test('Matte and In Box run on the selected box and layers', async () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const p = await openPanel(host);
+  const lastCall = () => p.cep.calls[p.cep.calls.length - 1];
+  comp.select(title, sub);
+  await p.click('[data-action="create"]');
+  const box = comp.layer('AutoBox 1');
+
+  comp.select(box);
+  await p.click('[data-action="matte"]');
+  assert.match(lastCall(), /AutoBoxHost\.run\("matte", /);
+  assert.equal(p.status().textContent, '');
+  assert.deepEqual(host.alerts, []);
+  assert.equal(title.trackMatteLayer, box);
+  assert.equal(sub.trackMatteLayer, box);
+  assert.ok(box.enabled, 'the box stays visible as the background');
+  await p.click('[data-action="matte"]');
+  assert.equal(title.trackMatteLayer, null, 'a second click takes the mattes off');
+  assert.equal(sub.trackMatteLayer, null);
+
+  comp.select(title);
+  await p.click('[data-action="inbox"]');
+  assert.match(lastCall(), /AutoBoxHost\.run\("inbox", /);
+  assert.equal(p.status().textContent, '');
+  assert.deepEqual(host.alerts, []);
+  assert.equal(title.effectValue('In Box'), 1, 'on: nothing changes until it is keyframed');
+  assert.ok(!hasEffect(sub, 'In Box'), 'only the selected layer gets one');
+  assert.ok(!hasEffect(box, 'In Box'));
+});
+
+test('settings are remembered, old ones are dropped and each section resets to its defaults', async () => {
   const host = createHost();
   scene(host);
-  const p = await openPanel(host, { storage: { padding: 12, layout: 3, fillColor: [1, 0, 0], bogus: 5, gap: 'x', radius: null } });
+  const p = await openPanel(host, { storage: {
+    padding: 12, anchor: 9, morphTime: 1.5, fillColor: [1, 0, 0], morphEase: 'x', radius: null,
+    layout: 3, gap: 40, align: 2, justify: 4, fillColor2: [1, 1, 1], strokeColor2: [0, 0, 0], bogus: 5,
+  } });
   assert.equal(p.$('.hot[data-key="padding"]').textContent, '12');
-  assert.equal(p.$('.hot[data-key="gap"]').textContent, '16', 'bad stored values fall back to defaults');
+  assert.equal(p.$('.hot[data-key="morphTime"]').textContent, '1.50');
+  assert.equal(p.$('#morph-ease').value, '4', 'bad stored values fall back to defaults');
   assert.equal(p.$('.hot[data-key="radius"]').textContent, '16');
-  assert.ok(p.$('.seg[data-key="layout"] button[data-value="3"]').classList.contains('on'));
+  assert.equal(p.$('#anchor-name').textContent, 'Bottom Right');
   assert.equal(p.$('.swatch[data-pick="fillColor"]').style.backgroundColor, 'rgb(255, 0, 0)');
+  const keys = Object.keys(p.w.AutoBoxPanel.DEFAULTS).sort();
+  assert.deepEqual(Object.keys(p.settings()).sort(), keys, 'settings from older versions are dropped');
+
   await p.click('.reset[data-group="box"]');
   assert.equal(p.$('.hot[data-key="padding"]').textContent, '32');
-  assert.equal(p.settings().layout, 3, 'other sections are untouched');
+  assert.equal(p.$('#anchor-name').textContent, 'Top Left', 'Box Anchor resets with the box');
+  assert.equal(p.settings().morphTime, 1.5, 'other sections are untouched');
   assert.ok(p.$('.fx[data-twirl="g-box"]').classList.contains('open'), 'Reset does not collapse the section');
-  await p.click('.reset[data-group="layout"]');
-  assert.equal(JSON.parse(p.w.localStorage.getItem('braised.autobox.settings')).layout, 1);
+  const saved = JSON.parse(p.w.localStorage.getItem('braised.autobox.settings'));
+  assert.deepEqual(Object.keys(saved).sort(), keys, 'and forgotten on the next save');
+  await p.click('.reset[data-group="fill"]');
+  assert.equal(p.$('.swatch[data-pick="fillColor"]').style.backgroundColor, 'rgb(27, 54, 67)');
+  await p.click('.reset[data-group="animation"]');
+  assert.equal(JSON.parse(p.w.localStorage.getItem('braised.autobox.settings')).morphTime, 0.4);
 });
 
 test('host errors and running outside After Effects are reported in the panel', async () => {
@@ -385,7 +529,7 @@ test('the panel hands the keyboard back to After Effects', async () => {
   const host = createHost();
   scene(host);
   const p = await openPanel(host);
-  const sel = p.$('#justify');
+  const sel = p.$('#morph-ease');
   sel.focus();
   sel.value = '2';
   sel.dispatchEvent(new p.w.Event('change'));
@@ -396,7 +540,7 @@ test('the panel hands the keyboard back to After Effects', async () => {
   assert.notEqual(p.w.document.activeElement, sel, 'after a mouse pick the menu gives up focus');
   p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
 
-  const hot = p.$('.hot[data-key="gap"]');
+  const hot = p.$('.hot[data-key="morphTime"]');
   hot.focus();
   const asked = JSON.parse(p.cep.keyInterest[p.cep.keyInterest.length - 1]);
   assert.ok(asked.length >= 5 && asked.every((k) => typeof k.keyCode === 'number'), 'arrows/Enter requested while a value has focus');
@@ -457,8 +601,7 @@ test('huge numbers are rejected and quick clicks still open the editor', async (
   const host = createHost();
   scene(host);
   const p = await openPanel(host);
-  p.$('#fill-type').value = '2';
-  p.$('#fill-type').dispatchEvent(new p.w.Event('change'));
+  p.choose('#fill-type', 2);
   p.type('fillAngle', '1e308');
   assert.equal(p.settings().fillAngle, 100000, 'clamped instead of becoming Infinity');
   assert.match(p.$('.hot[data-key="fillAngle"]').textContent, /^277x\+280\.0\u00b0$/);
@@ -468,7 +611,7 @@ test('huge numbers are rejected and quick clicks still open the editor', async (
   assert.equal(p.settings().padding, 100000, 'clamped to the field range');
 
   // macOS can report a move with no buttons after a quick click: still a click.
-  const hot = p.$('.hot[data-key="gap"]');
+  const hot = p.$('.hot[data-key="morphTime"]');
   hot.dispatchEvent(p.mouse('mousedown', 50));
   p.w.document.dispatchEvent(p.mouse('mousemove', 51, 0, { buttons: 0 }));
   assert.ok(hot.querySelector('input'), 'the editor opens');

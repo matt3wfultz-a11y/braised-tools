@@ -1,8 +1,8 @@
 {
   "name": "ae-autobox",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "private": true,
-  "description": "AutoBox \u2014 auto-sizing background boxes and auto layout for After Effects (ScriptUI panel)",
+  "description": "AutoBox \u2014 auto-sizing background boxes for After Effects that animate to fit their layers and work as their track matte",
   "scripts": {
     "test": "node --test test/*.test.js",
     "build:zxp": "node scripts/build-zxp.js"

@@ -5,84 +5,8 @@
   <title>AutoBox</title>
   <link rel="stylesheet" href="css/panel.css">
 </head>
-<body class="is-free">
+<body>
   <main class="panel">
-
-    <!-- Layout -->
-    <section class="fx" data-twirl="g-layout">
-      <div class="head" role="button" tabindex="0">
-        <span class="twirl" aria-hidden="true"></span>
-        <span class="label"><span class="badge">fx</span><span class="title">Layout</span></span>
-        <span class="reset" data-group="layout" role="button" tabindex="0" title="Restore the default layout settings">Reset</span>
-      </div>
-      <div class="body">
-        <div class="prop">
-          <span class="twirl-space"></span>
-          <span class="name">Mode</span>
-          <div class="value">
-            <div class="seg icons" data-key="layout" role="radiogroup" aria-label="Layout mode">
-              <button type="button" role="radio" data-value="1" aria-label="Free" title="Free: layers stay where they are and the box wraps around them"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="2" width="6" height="4" rx="0.5"/><rect x="7" y="8" width="6" height="4" rx="0.5"/></svg></button>
-              <button type="button" role="radio" data-value="2" aria-label="Vertical stack" title="Vertical stack: top to bottom, in timeline order"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="2" y="1.5" width="10" height="3" rx="0.5"/><rect x="2" y="5.5" width="10" height="3" rx="0.5"/><rect x="2" y="9.5" width="10" height="3" rx="0.5"/></svg></button>
-              <button type="button" role="radio" data-value="3" aria-label="Horizontal stack" title="Horizontal stack: left to right, in timeline order"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="2" width="3" height="10" rx="0.5"/><rect x="5.5" y="2" width="3" height="10" rx="0.5"/><rect x="9.5" y="2" width="3" height="10" rx="0.5"/></svg></button>
-            </div>
-            <span class="hint" id="layout-name">Free</span>
-          </div>
-        </div>
-
-        <div class="prop stack-only" data-twirl="s-gap" data-open="false">
-          <button type="button" class="twirl" aria-label="Show Gap slider"></button>
-          <span class="name">Gap</span>
-          <div class="value"><span class="hot" data-max="100000" data-min="-100000" data-key="gap" tabindex="0" role="spinbutton" aria-label="Gap" title="Space between stacked layers. Drag, or click to type"></span><span class="unit">px</span></div>
-          <div class="body">
-            <div class="slider" data-key="gap" data-smin="0" data-smax="100"><span class="lo">0</span><span class="hi">100</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
-          </div>
-        </div>
-
-        <div class="prop stack-only">
-          <span class="twirl-space"></span>
-          <span class="name">Align</span>
-          <div class="value">
-            <div class="seg icons" data-key="align" role="radiogroup" aria-label="Align">
-              <button type="button" role="radio" data-value="1" aria-label="Start" title="Start: left in a vertical stack, top in a horizontal one"><svg class="for-v" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="1" height="12"/><rect x="3" y="3" width="9" height="3"/><rect x="3" y="8" width="5" height="3"/></svg><svg class="for-h" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="1"/><rect x="3" y="3" width="3" height="9"/><rect x="8" y="3" width="3" height="5"/></svg></button>
-              <button type="button" role="radio" data-value="2" aria-label="Center" title="Center"><svg class="for-v" viewBox="0 0 14 14" aria-hidden="true"><rect x="6.5" y="1" width="1" height="12"/><rect x="2.5" y="3" width="9" height="3"/><rect x="4.5" y="8" width="5" height="3"/></svg><svg class="for-h" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="6.5" width="12" height="1"/><rect x="3" y="2.5" width="3" height="9"/><rect x="8" y="4.5" width="3" height="5"/></svg></button>
-              <button type="button" role="radio" data-value="3" aria-label="End" title="End: right in a vertical stack, bottom in a horizontal one"><svg class="for-v" viewBox="0 0 14 14" aria-hidden="true"><rect x="12" y="1" width="1" height="12"/><rect x="2" y="3" width="9" height="3"/><rect x="6" y="8" width="5" height="3"/></svg><svg class="for-h" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="12" width="12" height="1"/><rect x="3" y="2" width="3" height="9"/><rect x="8" y="6" width="3" height="5"/></svg></button>
-            </div>
-          </div>
-        </div>
-
-        <div class="prop stack-only">
-          <span class="twirl-space"></span>
-          <label class="name" for="justify">Justify</label>
-          <div class="value">
-            <select id="justify" data-key="justify" title="Where the stack sits when the box is bigger than its contents (Min Size)">
-              <option value="1">Start</option>
-              <option value="2">Center</option>
-              <option value="3">End</option>
-              <option value="4">Space Between</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="prop">
-          <span class="twirl-space"></span>
-          <span class="name">Box Anchor</span>
-          <div class="value">
-            <div class="anchor" data-key="anchor" role="radiogroup" aria-label="Box anchor" title="The point of the box that stays put while it grows or shrinks">
-              <button type="button" role="radio" data-value="1" aria-label="Top Left"></button>
-              <button type="button" role="radio" data-value="2" aria-label="Top"></button>
-              <button type="button" role="radio" data-value="3" aria-label="Top Right"></button>
-              <button type="button" role="radio" data-value="4" aria-label="Left"></button>
-              <button type="button" role="radio" data-value="5" aria-label="Center"></button>
-              <button type="button" role="radio" data-value="6" aria-label="Right"></button>
-              <button type="button" role="radio" data-value="7" aria-label="Bottom Left"></button>
-              <button type="button" role="radio" data-value="8" aria-label="Bottom"></button>
-              <button type="button" role="radio" data-value="9" aria-label="Bottom Right"></button>
-            </div>
-            <span class="hint" id="anchor-name">Top Left</span>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- Box -->
     <section class="fx" data-twirl="g-box">
@@ -134,8 +58,65 @@
 
         <div class="prop">
           <span class="twirl-space"></span>
+          <span class="name">Box Anchor</span>
+          <div class="value">
+            <div class="anchor" data-key="anchor" role="radiogroup" aria-label="Box anchor" title="The point of the box that stays put while it grows or shrinks">
+              <button type="button" role="radio" data-value="1" aria-label="Top Left"></button>
+              <button type="button" role="radio" data-value="2" aria-label="Top"></button>
+              <button type="button" role="radio" data-value="3" aria-label="Top Right"></button>
+              <button type="button" role="radio" data-value="4" aria-label="Left"></button>
+              <button type="button" role="radio" data-value="5" aria-label="Center"></button>
+              <button type="button" role="radio" data-value="6" aria-label="Right"></button>
+              <button type="button" role="radio" data-value="7" aria-label="Bottom Left"></button>
+              <button type="button" role="radio" data-value="8" aria-label="Bottom"></button>
+              <button type="button" role="radio" data-value="9" aria-label="Bottom Right"></button>
+            </div>
+            <span class="hint" id="anchor-name">Top Left</span>
+          </div>
+        </div>
+
+        <div class="prop">
+          <span class="twirl-space"></span>
           <label class="name" for="ignore-hidden">Ignore Hidden</label>
           <div class="value"><label class="check"><input id="ignore-hidden" type="checkbox" data-key="ignoreHidden"><span class="box"></span><span class="hint">Hidden layers take no space</span></label></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Animation -->
+    <section class="fx" data-twirl="g-animation">
+      <div class="head" role="button" tabindex="0">
+        <span class="twirl" aria-hidden="true"></span>
+        <span class="label"><span class="badge">fx</span><span class="title">Animation</span></span>
+        <span class="reset" data-group="animation" role="button" tabindex="0" title="Restore the default animation settings">Reset</span>
+      </div>
+      <div class="body">
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="smart-animate">Smart Animate</label>
+          <div class="value"><label class="check"><input id="smart-animate" type="checkbox" data-key="smartAnimate"><span class="box"></span><span class="hint">Box morphs to fit layers coming in</span></label></div>
+        </div>
+
+        <div class="prop" data-twirl="s-morphTime" data-open="false">
+          <button type="button" class="twirl" aria-label="Show Morph Time slider"></button>
+          <span class="name">Morph Time</span>
+          <div class="value"><span class="hot" data-max="60" data-min="0" data-key="morphTime" data-step="0.01" data-decimals="2" tabindex="0" role="spinbutton" aria-label="Morph Time" title="How long the box takes to fit a layer that comes in without keyframes. Drag, or click to type"></span><span class="unit">s</span></div>
+          <div class="body">
+            <div class="slider" data-key="morphTime" data-smin="0" data-smax="2"><span class="lo">0s</span><span class="hi">2s</span><div class="track"><div class="fill"></div><div class="thumb"></div></div></div>
+          </div>
+        </div>
+
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="morph-ease">Morph Ease</label>
+          <div class="value">
+            <select id="morph-ease" data-key="morphEase" title="The easing of those morphs">
+              <option value="1">Linear</option>
+              <option value="2">Ease In</option>
+              <option value="3">Ease Out</option>
+              <option value="4">Ease In Out</option>
+            </select>
+          </div>
         </div>
       </div>
     </section>
@@ -168,15 +149,7 @@
 
         <div class="prop" data-show="fillType:2,3">
           <span class="twirl-space"></span>
-          <span class="name">Colors</span>
-          <div class="value">
-            <div class="gradient" data-from="fillColor" data-to="fillColor2" data-type="fillType">
-              <div class="ramp"></div>
-              <button type="button" class="swatch stop a" data-key="fillColor" data-pick="fillColor" aria-label="Fill start color" title="Start color"></button>
-              <button type="button" class="swatch stop b" data-key="fillColor2" data-pick="fillColor2" aria-label="Fill end color" title="End color"></button>
-            </div>
-            <button type="button" class="icon" data-swap="fillColor,fillColor2" aria-label="Swap fill colors" title="Swap colors">&#8644;</button>
-          </div>
+          <p class="note">Gradient colors: use Edit Gradient in the box's Contents.</p>
         </div>
 
         <div class="prop" data-show="fillType:2">
@@ -236,15 +209,7 @@
 
         <div class="prop" data-show="strokeType:2,3">
           <span class="twirl-space"></span>
-          <span class="name">Colors</span>
-          <div class="value">
-            <div class="gradient" data-from="strokeColor" data-to="strokeColor2" data-type="strokeType">
-              <div class="ramp"></div>
-              <button type="button" class="swatch stop a" data-key="strokeColor" data-pick="strokeColor" aria-label="Stroke start color" title="Start color"></button>
-              <button type="button" class="swatch stop b" data-key="strokeColor2" data-pick="strokeColor2" aria-label="Stroke end color" title="End color"></button>
-            </div>
-            <button type="button" class="icon" data-swap="strokeColor,strokeColor2" aria-label="Swap stroke colors" title="Swap colors">&#8644;</button>
-          </div>
+          <p class="note">Gradient colors: use Edit Gradient in the box's Contents.</p>
         </div>
 
         <div class="prop" data-show="strokeType:2">
@@ -277,20 +242,26 @@
         <button type="button" data-action="apply" title="Push these settings to the selected box(es)">Apply to Box</button>
         <button type="button" data-action="select" title="Select every layer in the selected box(es)">Select Members</button>
       </div>
-      <button type="button" data-action="release" title="Bake the layout and remove the AutoBox rig from the selected box(es)">Release</button>
+      <div class="pair">
+        <button type="button" data-action="matte" title="Use the box as the track matte of its layers; click again to remove. After Effects 2023+">Matte</button>
+        <button type="button" data-action="inbox" title="Add a keyframeable In Box checkbox to the selected layers: on = the box fits the layer">In Box</button>
+      </div>
+      <button type="button" data-action="release" title="Bake the box's size and remove the AutoBox rig from the selected box(es)">Release</button>
     </div>
 
     <p class="status" id="status" role="status" aria-live="polite"></p>
 
     <details class="help">
       <summary>How it works</summary>
-      <p><strong>Create Box</strong> adds a shape layer behind the selected layers and parents them to it. Moving, scaling or rotating the box moves the group. Any layer parented to a box is in that box, so editing text, renaming or reordering layers is safe. Use <strong>Add to Box</strong> and <strong>Remove</strong> to change what's in a box.</p>
-      <p><strong>Free</strong> keeps layers where they are and wraps the box around them. <strong>Vertical</strong> and <strong>Horizontal</strong> stack them in timeline order with the gap between. Reorder layers in the timeline to reorder the stack.</p>
-      <p>Drag a blue value left or right to change it (Shift for bigger steps, Ctrl/Cmd for finer ones), or click it to type. Everything also lives on the box layer's <strong>Effect Controls</strong>, where it can be keyframed. These panel values are the defaults for new boxes; <strong>Apply to Box</strong> pushes them onto selected boxes (keyframed controls are left alone).</p>
-      <p><strong>Release</strong> bakes the current layout into plain values and keyframes and removes the rig.</p>
+      <p><strong>Create Box</strong> puts a shape layer behind the selected layers and parents them to it. The layers get no expressions: animate them as usual. Moving, scaling or rotating the box moves the group. Any layer parented to a box is in that box, so editing text, renaming or reordering layers is safe. Use <strong>Add to Box</strong> and <strong>Remove</strong> to change what's in a box.</p>
+      <p><strong>Smart Animate</strong> follows the layers' keyframes, not every frame. A layer's first keyframed move brings it in, its last move (if it has two or more) takes it out, and the moves in between reposition it. The box morphs to fit the layers that are in, on the curve of the move that brought them, and holds when layers leave until the next one comes in. Layers without keyframes come in at their in point over <strong>Morph Time</strong>.</p>
+      <p><strong>In Box</strong> adds a checkbox to the selected layers: keyframe it to say when a layer counts. <strong>Freeze</strong>, in the box's Effect Controls, holds the box. <strong>Matte</strong> uses the box as its layers' track matte (After Effects 2023+); click it again to take the mattes off.</p>
+      <p>The look lives in the box's <strong>Contents</strong>: Fill, Stroke, Gradient Fill, Gradient Stroke and the rectangle's Roundness, native and yours to edit or animate. Gradients stretch with the box: their Start and End Point are percentages of it. Padding, size and animation settings are in the box's <strong>Effect Controls</strong>.</p>
+      <p>Drag a blue value left or right to change it (Shift for bigger steps, Ctrl/Cmd for finer ones), or click it to type. These panel values are the defaults for new boxes; <strong>Apply to Box</strong> pushes them onto selected boxes (animated properties are left alone).</p>
+      <p><strong>Release</strong> bakes the box's size into plain values and keyframes and removes the rig.</p>
     </details>
 
-    <footer>AutoBox <span id="version">2.0.1</span> &middot; Braised Tools</footer>
+    <footer>AutoBox <span id="version">3.0.0</span> &middot; Braised Tools</footer>
   </main>
   <script src="js/panel.js"></script>
 </body>

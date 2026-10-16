@@ -7,7 +7,8 @@
  *
  * Controls follow After Effects: blue "hot text" numbers you drag left/right
  * (Shift = x10, Ctrl/Cmd = x0.1) or click to type, sliders you twirl open,
- * angle dials, color swatches and two-stop gradient bars.
+ * angle dials and color swatches. They set the starting look of new boxes;
+ * after that the look is the box's own shape properties.
  *
  * Plain ES5: After Effects 2020 runs CEP panels on Chromium 61.
  */
@@ -21,10 +22,6 @@
 
   // Keep in sync with DEFAULTS in AutoBox.jsx (checked by the test suite).
   var DEFAULTS = {
-    layout: 1,
-    gap: 16,
-    align: 1,
-    justify: 1,
     anchor: 1,
     padding: 32,
     extraTop: 0,
@@ -34,26 +31,27 @@
     radius: 16,
     minWidth: 0,
     minHeight: 0,
+    ignoreHidden: 1,
+    smartAnimate: 1,
+    morphTime: 0.4,
+    morphEase: 4,
     fillType: 1,
     fillColor: [27 / 255, 54 / 255, 67 / 255],
-    fillColor2: [0, 166 / 255, 105 / 255],
     fillAngle: 90,
     fillOpacity: 100,
     strokeType: 1,
     strokeColor: [0, 166 / 255, 105 / 255],
-    strokeColor2: [1, 1, 1],
     strokeAngle: 90,
     strokeWidth: 0,
-    strokeOpacity: 100,
-    ignoreHidden: 1
+    strokeOpacity: 100
   };
 
   // Which settings each section's Reset restores.
   var GROUPS = {
-    layout: ['layout', 'gap', 'align', 'justify', 'anchor'],
-    box: ['padding', 'extraTop', 'extraRight', 'extraBottom', 'extraLeft', 'radius', 'minWidth', 'minHeight', 'ignoreHidden'],
-    fill: ['fillType', 'fillColor', 'fillColor2', 'fillAngle', 'fillOpacity'],
-    stroke: ['strokeType', 'strokeColor', 'strokeColor2', 'strokeAngle', 'strokeWidth', 'strokeOpacity']
+    box: ['padding', 'extraTop', 'extraRight', 'extraBottom', 'extraLeft', 'radius', 'minWidth', 'minHeight', 'anchor', 'ignoreHidden'],
+    animation: ['smartAnimate', 'morphTime', 'morphEase'],
+    fill: ['fillType', 'fillColor', 'fillAngle', 'fillOpacity'],
+    stroke: ['strokeType', 'strokeColor', 'strokeAngle', 'strokeWidth', 'strokeOpacity']
   };
 
   var cep = window.__adobe_cep__;
@@ -66,6 +64,8 @@
     return JSON.parse(JSON.stringify(obj));
   }
 
+  // Only keys in DEFAULTS are read back: settings older versions saved
+  // (layout, gap, fillColor2...) are dropped, and the next save forgets them.
   function load() {
     var s = copy(DEFAULTS);
     try {
@@ -140,9 +140,11 @@
     return turns + 'x' + (deg < 0 ? '' : '+') + deg.toFixed(1) + '\u00b0';
   }
 
+  // Fixed decimals, like After Effects: Morph Time reads "0.40".
   function formatValue(el, v) {
     if (el.getAttribute('data-format') === 'angle') return formatAngle(v);
-    return String(round(v, num(el, 'data-decimals', 0)));
+    var decimals = num(el, 'data-decimals', 0);
+    return round(v, decimals).toFixed(decimals);
   }
 
   // ---------------------------------------------------------------------
@@ -255,7 +257,7 @@
       // 0° points up and angles turn clockwise, like After Effects.
       $('.hand', el).style.transform = 'rotate(' + settings[el.getAttribute('data-key')] + 'deg)';
     });
-    each('.seg[data-key], .anchor[data-key]', function (el) {
+    each('.anchor[data-key]', function (el) {
       var v = settings[el.getAttribute('data-key')];
       each('button', function (b) {
         var on = parseInt(b.getAttribute('data-value'), 10) === v;
@@ -269,14 +271,6 @@
     each('.swatch[data-key]', function (el) {
       el.style.backgroundColor = toCss(settings[el.getAttribute('data-key')]);
     });
-    each('.gradient[data-from]', function (el) {
-      var a = toCss(settings[el.getAttribute('data-from')]);
-      var b = toCss(settings[el.getAttribute('data-to')]);
-      var radial = settings[el.getAttribute('data-type')] === 3;
-      $('.ramp', el).style.backgroundImage = radial ?
-        'radial-gradient(circle at 0 50%, ' + a + ', ' + b + ')' :
-        'linear-gradient(to right, ' + a + ', ' + b + ')';
-    });
     each('input[type="checkbox"][data-key]', function (el) {
       el.checked = settings[el.getAttribute('data-key')] > 0;
     });
@@ -287,9 +281,6 @@
       var t = $('.twirl', el);
       if (t) t.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
-    document.body.classList.toggle('is-free', settings.layout === 1);
-    document.body.classList.toggle('is-horizontal', settings.layout === 3);
-    $('#layout-name').textContent = ['Free', 'Vertical', 'Horizontal'][settings.layout - 1] || '';
     $('#anchor-name').textContent = ANCHORS[settings.anchor - 1] || '';
   }
 
@@ -485,7 +476,7 @@
     each('.slider[data-key]', bindSlider);
     each('.dial[data-key]', bindDial);
 
-    each('.seg[data-key], .anchor[data-key]', function (el) {
+    each('.anchor[data-key]', function (el) {
       var key = el.getAttribute('data-key');
       el.addEventListener('click', function (e) {
         var b = e.target.closest('button');
@@ -505,14 +496,6 @@
     });
     each('[data-pick]', function (el) {
       el.addEventListener('click', function () { pickColor(el.getAttribute('data-pick')); });
-    });
-    each('[data-swap]', function (el) {
-      el.addEventListener('click', function () {
-        var keys = el.getAttribute('data-swap').split(','), values = {};
-        values[keys[0]] = settings[keys[1]];
-        values[keys[1]] = settings[keys[0]];
-        setMany(values);
-      });
     });
     each('[data-twirl] > .twirl, [data-twirl] > .head', function (el) {
       function toggle() {

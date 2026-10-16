@@ -12,6 +12,11 @@ const path = require('path');
 const vm = require('vm');
 
 const SCRIPT_PATH = path.join(__dirname, '..', 'AutoBox.jsx');
+const KEY_LINEAR = 6612;
+const KEY_HOLD = 6614;
+const TRACK_MATTE = { NO_TRACK_MATTE: 5012, ALPHA: 5013, ALPHA_INVERTED: 5014, LUMA: 5015, LUMA_INVERTED: 5016 };
+// Track mattes by layer (setTrackMatte) arrived in After Effects 23.0.
+const features = { setTrackMatte: true };
 
 function clone(v) {
   return Array.isArray(v) ? v.slice() : v;
@@ -45,7 +50,17 @@ function exprProp(state, t) {
     if (!c) throw new Error(`Property "${key}" is missing in ${state.name}`);
     return exprProp(c, t);
   };
-  Object.defineProperty(f, 'value', { get: () => new Prop(state).valueAtTime(t, false) });
+  // Like After Effects, 2D layer properties read as 2D in expressions.
+  const trim = (v) => (state.exprDims && Array.isArray(v) ? v.slice(0, state.exprDims) : v);
+  Object.defineProperty(f, 'value', { configurable: true, get: () => trim(new Prop(state).valueAtTime(t, false)) });
+  f.valueAtTime = (t2) => trim(new Prop(state).valueAtTime(t2, false));
+  Object.defineProperty(f, 'numKeys', { get: () => state.keys.length });
+  f.key = (i) => {
+    const k = state.keys[i - 1];
+    if (!k) throw new Error(`Key ${i} is out of range in ${state.name}`);
+    return { time: k.t, value: trim(clone(k.v)), index: i };
+  };
+  Object.defineProperty(f, 'numProperties', { get: () => state.children.length });
   f.propertyGroup = (n = 1) => {
     let s = state;
     for (let i = 0; i < n; i++) s = s.parent;
@@ -70,7 +85,7 @@ function evaluate(state, t, base) {
   try {
     const layer = state.layer;
     const exprValue = state.exprDims && Array.isArray(base) ? base.slice(0, state.exprDims) : base;
-    let out = runExpression(state.expression, new ExprLayer(layer, t), new ExprComp(layer.comp, t), exprProp(state, t), t, exprValue);
+    let out = runExpression(state.expression, exprLayer(layer, t), new ExprComp(layer.comp, t), exprProp(state, t), t, exprValue);
     if (typeof out === 'boolean') out = out ? 1 : 0;
     if (Array.isArray(out)) {
       out = Array.from(out);
@@ -97,24 +112,37 @@ class ExprComp {
     this._t = t;
   }
   get numLayers() { return this._c._layers.length; }
+  get frameDuration() { return this._c.frameDuration; }
+  get duration() { return this._c.duration; }
   layer(key) {
     const l = typeof key === 'number' ? this._c._layers[key - 1] : this._c._layers.find((x) => x.name === key);
     if (!l) throw new Error(`Layer "${key}" is missing or does not exist`);
-    return new ExprLayer(l, this._t);
+    return exprLayer(l, this._t);
   }
 }
 
+// Like After Effects, a layer can be called with a match name to reach its
+// property groups: L("ADBE Text Properties")("ADBE Text Animators").
+function exprLayer(layer, t) {
+  const f = (key) => exprProp(layer.root, t)(key);
+  Object.setPrototypeOf(f, ExprLayer.prototype);
+  Object.defineProperty(f, 'name', { get: () => layer.name });
+  f._l = layer;
+  f._t = t;
+  return f;
+}
+
 class ExprLayer {
-  constructor(layer, t) {
-    this._l = layer;
-    this._t = t;
-  }
   get index() { return this._l.index; }
   get name() { return this._l.name; }
+  get enabled() { return this._l.enabled; }
+  get inPoint() { return this._l.inPoint; }
+  get outPoint() { return this._l.outPoint; }
+  get startTime() { return this._l.startTime; }
   get hasParent() { return !!this._l.parent; }
   get parent() {
     if (!this._l.parent) throw new Error(`${this._l.name} has no parent`);
-    return new ExprLayer(this._l.parent, this._t);
+    return exprLayer(this._l.parent, this._t);
   }
   get active() {
     const l = this._l;
@@ -124,7 +152,17 @@ class ExprLayer {
   get hasVideo() { return this._l instanceof CameraLayer ? true : this._l.hasVideo; }
   get text() {
     if (!(this._l instanceof TextLayer)) return undefined;
-    return { sourceText: this._l.sourceText };
+    const l = this._l;
+    const sourceText = {
+      value: l.sourceText,
+      valueAtTime: () => l.sourceText,
+      get numKeys() { return l.textKeys.length; },
+      key(i) {
+        if (i < 1 || i > l.textKeys.length) throw new Error(`Key ${i} is out of range in Source Text`);
+        return { time: l.textKeys[i - 1], value: l.sourceText, index: i };
+      },
+    };
+    return { sourceText };
   }
   get transform() {
     const l = this._l, t = this._t;
@@ -133,30 +171,41 @@ class ExprLayer {
       return { get anchorPoint() { return missing(); }, get scale() { return missing(); },
         position: { get value() { return l.positionAt(t); } }, rotation: { value: 0 } };
     }
-    const two = (mn) => ({ get value() { return l.tprop(mn).valueAtTime(t, false).slice(0, 2); } });
+    const get = (mn) => exprProp(l.tprop(mn).s, t);
+    // Position reads X/Y Position when its dimensions are separated.
+    const position = get('ADBE Position');
+    Object.defineProperty(position, 'value', { get: () => l.positionAt(t) });
+    position.valueAtTime = (t2) => l.positionAt(t2);
+    const separated = () => {
+      if (!l.tprop('ADBE Position').dimensionsSeparated) throw new Error('X Position is only there when Position is separated');
+    };
     return {
-      anchorPoint: two('ADBE Anchor Point'),
-      scale: two('ADBE Scale'),
-      position: { get value() { return l.positionAt(t); } },
-      rotation: { get value() { return l.tprop('ADBE Rotate Z').valueAtTime(t, false); } },
-      opacity: { get value() { return l.tprop('ADBE Opacity').valueAtTime(t, false); } },
+      anchorPoint: get('ADBE Anchor Point'),
+      scale: get('ADBE Scale'),
+      position,
+      get xPosition() { separated(); return get('ADBE Position_0'); },
+      get yPosition() { separated(); return get('ADBE Position_1'); },
+      rotation: get('ADBE Rotate Z'),
+      opacity: get('ADBE Opacity'),
     };
   }
   content(key) {
     if (!(this._l instanceof ShapeLayer)) throw new Error(`${this._l.name} has no content()`);
     return exprProp(this._l.contentsState, this._t)(key);
   }
-  sourceRectAtTime(t = this._t, ext = false) {
+  // Like After Effects, t is read as the layer's own time: a layer that
+  // starts at 1s answers for comp time t + 1. sourceTime(t) converts.
+  sourceRectAtTime(t = this.sourceTime(this._t), ext = false) {
     if (this._l instanceof CameraLayer) throw new Error('Camera has no sourceRectAtTime');
-    return this._l.sourceRectAtTime(t, ext);
+    return this._l.sourceRectAtTime(t + this._l.startTime, ext);
   }
-  toComp(p) { return this._l.toCompAt(this._t, p); }
-  fromComp(p) { return this._l.fromCompAt(this._t, p); }
+  sourceTime(t = this._t) { return t - this._l.startTime; }
+  toComp(p, t = this._t) { return this._l.toCompAt(t, p); }
+  fromComp(p, t = this._t) { return this._l.fromCompAt(t, p); }
   effect(name) {
     const e = this._l.effectsState.children.find((c) => c.name === name);
     if (!e) throw new Error(`Effect "${name}" is missing`);
-    const t = this._t;
-    return (i) => ({ get value() { return new Prop(e.children[i - 1]).valueAtTime(t, false); } });
+    return (i) => exprProp(e.children[i - 1], this._t);
   }
 }
 
@@ -169,7 +218,7 @@ class PState {
       id: nextId++, name: '', matchName: '', group: false, children: [], value: 0, keys: [],
       expression: '', expressionEnabled: true, expressionError: '', gen: 0, parent: null,
       layer: null, spatial: false, dimensionsSeparated: false, items: null, removed: false,
-      exprDims: 0, interp: [],
+      exprDims: 0, interp: [], enabled: true, holdOnly: false,
     }, o);
   }
   add(child) {
@@ -205,13 +254,20 @@ function group(name, matchName, children) {
   return g;
 }
 
+// Keys are { t, v, hold, ease }: `ease` maps the segment that starts at the
+// key (0..1 -> progress, may overshoot); `hold` keeps the value until the next
+// key. Checkbox and menu controls only have hold keys, like in After Effects.
 function staticAt(s, t) {
   if (!s.keys.length) return clone(s.value);
   const k = s.keys;
   if (t <= k[0].t) return clone(k[0].v);
   if (t >= k[k.length - 1].t) return clone(k[k.length - 1].v);
   for (let i = 0; i < k.length - 1; i++) {
-    if (t >= k[i].t && t <= k[i + 1].t) return lerp(k[i].v, k[i + 1].v, (t - k[i].t) / (k[i + 1].t - k[i].t));
+    if (t >= k[i].t && t < k[i + 1].t) {
+      if (k[i].hold || s.holdOnly) return clone(k[i].v);
+      const f = (t - k[i].t) / (k[i + 1].t - k[i].t);
+      return lerp(k[i].v, k[i + 1].v, k[i].ease ? k[i].ease(f) : f);
+    }
   }
   return clone(k[k.length - 1].v);
 }
@@ -291,6 +347,16 @@ class Prop {
         `(mismatch with resultP, expected "${list[before.indexOf(shifted)].matchName}")`;
     }
   }
+  // The eyeball / fx switch of shape items, masks and effects.
+  get canSetEnabled() {
+    const s = this._c();
+    return /^ADBE Vector (Graphic|Shape|Group|Filter)/.test(s.matchName) || (!!s.parent && s.parent.matchName === 'ADBE Effect Parade');
+  }
+  get enabled() { return this._c().enabled; }
+  set enabled(v) {
+    if (!this.canSetEnabled) throw new Error(`Can't set enabled on ${this._c().name}`);
+    this._c().enabled = !!v;
+  }
   get canSetExpression() { return !this._c().group && !this._c().noValue; }
   get expression() { return this._c().expression; }
   set expression(v) {
@@ -347,7 +413,11 @@ class Prop {
   }
   keyTime(i) { return this._c().keys[i - 1].t; }
   keyValue(i) { return clone(this._c().keys[i - 1].v); }
-  setInterpolationTypeAtKey(i) { this._key(i); }
+  setInterpolationTypeAtKey(i, inType, outType) {
+    const s = this._key(i);
+    s.keys[i - 1].hold = (outType === undefined ? inType : outType) === KEY_HOLD;
+  }
+  keyOutInterpolationType(i) { return this._key(i).holdOnly || this._c().keys[i - 1].hold ? KEY_HOLD : KEY_LINEAR; }
   setSpatialAutoBezierAtKey(i) { this._key(i); }
   setSpatialContinuousAtKey(i) { this._key(i); }
   setSpatialTangentsAtKey(i, a, b) {
@@ -390,11 +460,11 @@ function effect(name, matchName, ctlName, value, extra) {
 
 const FACTORIES = {
   'ADBE Slider Control': effect('Slider Control', 'ADBE Slider Control', 'Slider', 0),
-  'ADBE Checkbox Control': effect('Checkbox Control', 'ADBE Checkbox Control', 'Checkbox', 0),
+  'ADBE Checkbox Control': effect('Checkbox Control', 'ADBE Checkbox Control', 'Checkbox', 0, { holdOnly: true }),
   'ADBE Color Control': effect('Color Control', 'ADBE Color Control', 'Color', [1, 0, 0, 1]),
   'ADBE Point Control': effect('Point Control', 'ADBE Point Control', 'Point', [0, 0]),
   'ADBE Angle Control': effect('Angle Control', 'ADBE Angle Control', 'Angle', 0),
-  'ADBE Dropdown Control': effect('Dropdown Menu Control', 'ADBE Dropdown Control', 'Menu', 1, { items: ['Item 1', 'Item 2', 'Item 3'] }),
+  'ADBE Dropdown Control': effect('Dropdown Menu Control', 'ADBE Dropdown Control', 'Menu', 1, { items: ['Item 1', 'Item 2', 'Item 3'], holdOnly: true }),
   'ADBE Vector Group': () => group('Group 1', 'ADBE Vector Group', [
     group('Contents', 'ADBE Vectors Group'),
     group('Transform', 'ADBE Vector Transform Group'),
@@ -589,7 +659,10 @@ class Layer {
     list.unshift(this);
   }
   remove() {
-    this.comp._layers.forEach((l) => { if (l._parent === this) l.parent = null; });
+    this.comp._layers.forEach((l) => {
+      if (l._parent === this) l.parent = null;
+      if (l._matte === this) l._matte = null;
+    });
     this.comp._layers.splice(this.comp._layers.indexOf(this), 1);
   }
   // Like Edit > Duplicate: the copy lands directly above the original.
@@ -629,13 +702,59 @@ class Layer {
   }
 }
 
-class AVLayer extends Layer {}
+class AVLayer extends Layer {
+  // Like After Effects 23+: any layer can be the matte, and choosing one
+  // switches the matte layer's video off.
+  get setTrackMatte() {
+    if (!features.setTrackMatte) return undefined;
+    return (layer, type) => {
+      // setTrackMatte(null, any type) removes the matte and keeps the type;
+      // a layer with NO_TRACK_MATTE is a documented no-op.
+      if (!layer) {
+        this._matte = null;
+        this._matteType = type;
+        return;
+      }
+      if (type === TRACK_MATTE.NO_TRACK_MATTE) return;
+      if (layer === this) throw new Error("A layer can't be its own track matte");
+      if (layer.comp !== this.comp) throw new Error('The track matte must be in the same comp');
+      this._matte = layer;
+      this._matteType = type;
+      layer.enabled = false;
+    };
+  }
+  get removeTrackMatte() {
+    if (!features.setTrackMatte) return undefined;
+    return () => { this._matte = null; };
+  }
+  get trackMatteLayer() { return this._matte || null; }
+  get trackMatteType() { return this._matteType || TRACK_MATTE.NO_TRACK_MATTE; }
+  get hasTrackMatte() { return !!this._matte; }
+  get isTrackMatte() { return this.comp._layers.some((l) => l._matte === this); }
+}
 // Like After Effects, a text layer that was never renamed is named after
 // its text, and its name changes whenever the text does.
 class TextLayer extends AVLayer {
   constructor(comp, o) {
     super(comp, o);
     this.sourceText = o.text !== undefined ? o.text : (o.name || '');
+    // Times of Source Text keyframes (pair with a rect function of time).
+    this.textKeys = o.textKeys || [];
+    this.textState = this.root.add(group('Text', 'ADBE Text Properties', [group('Animators', 'ADBE Text Animators')]));
+  }
+  // Test helper: a text animator with one Range Selector; returns the
+  // selector's Start / End / Offset states.
+  addAnimator() {
+    const animators = this.textState.children[0];
+    const n = animators.children.length + 1;
+    const start = prop('Start', 'ADBE Text Percent Start', 0);
+    const end = prop('End', 'ADBE Text Percent End', 100);
+    const offset = prop('Offset', 'ADBE Text Percent Offset', 0);
+    animators.add(group(`Animator ${n}`, 'ADBE Text Animator', [
+      group('Selectors', 'ADBE Text Selectors', [group('Range Selector 1', 'ADBE Text Selector', [start, end, offset])]),
+      group('Properties', 'ADBE Text Animator Properties'),
+    ]));
+    return { start, end, offset };
   }
   get name() { return this.isNameSet ? this._name : String(this.sourceText).split(/[\r\n]/)[0]; }
   set name(v) {
@@ -675,6 +794,7 @@ class ShapeLayer extends AVLayer {
       if (ext) {
         rs.parent.children.forEach((c) => {
           if (c.matchName !== 'ADBE Vector Graphic - Stroke' && c.matchName !== 'ADBE Vector Graphic - G-Stroke') return;
+          if (!c.enabled) return;
           const get = (mn) => new Prop(c.children.find((x) => x.matchName === mn)).valueAtTime(t, false);
           if (get('ADBE Vector Stroke Opacity') > 0) grow = Math.max(grow, get('ADBE Vector Stroke Width') / 2);
         });
@@ -827,7 +947,8 @@ function createHost() {
     confirm: (msg) => { host.confirms.push(String(msg)); return host.confirmAnswer; },
     $: { colorPicker: () => 0x336699 },
     CompItem, AVLayer, TextLayer, ShapeLayer, CameraLayer, Panel, Window,
-    KeyframeInterpolationType: { LINEAR: 6612, BEZIER: 6613, HOLD: 6614 },
+    KeyframeInterpolationType: { LINEAR: KEY_LINEAR, BEZIER: 6613, HOLD: KEY_HOLD },
+    TrackMatteType: TRACK_MATTE,
   };
   // AutoBox.jsx is plain ES3 and runs in this realm so `instanceof Array`
   // behaves like it does in ExtendScript.
@@ -843,4 +964,4 @@ function createHost() {
   return host;
 }
 
-module.exports = { createHost, CompItem, ShapeLayer, TextLayer, Prop, SCRIPT_PATH, UIControl };
+module.exports = { createHost, CompItem, ShapeLayer, TextLayer, Prop, SCRIPT_PATH, UIControl, features, TRACK_MATTE };

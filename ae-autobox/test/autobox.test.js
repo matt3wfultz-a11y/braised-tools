@@ -6,9 +6,10 @@ const fs = require('fs');
 const acorn = require('acorn');
 const path = require('path');
 const vm = require('vm');
-const { createHost, Prop, SCRIPT_PATH } = require('./ae-mock');
+const { createHost, Prop, SCRIPT_PATH, features, TRACK_MATTE } = require('./ae-mock');
 
-const EPS = 1e-6;
+const FIXTURES = path.join(__dirname, 'fixtures');
+const smooth = (f) => f * f * (3 - 2 * f);
 
 function near(actual, expected, msg) {
   if (Array.isArray(expected)) {
@@ -30,7 +31,7 @@ function settings(host, overrides) {
 // Title (layer 1) above Subtitle (layer 2), both left-aligned point text with
 // the anchor on the baseline, like fresh text layers in After Effects.
 function scene(host, opts = {}) {
-  const comp = host.newComp(opts.comp);
+  const comp = host.newComp(Object.assign({ duration: 10 }, opts.comp));
   const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
   const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
   return { comp, title, sub };
@@ -44,558 +45,351 @@ function create(host, comp, layers, overrides) {
   return comp._layers.find((l) => l.name.indexOf('AutoBox') === 0 && l.selected);
 }
 
-// Layout expressions (box sizing and member positions), as "Layer > Property".
-function rigExpressions(comp) {
+// Keyframes straight into the mock: [time, value, ease?] (ease shapes the
+// segment that starts at that key).
+function keys(prop, list) {
+  const s = prop instanceof Prop ? prop.s : prop;
+  s.keys = list.map(([t, v, ease]) => ({ t, v: Array.isArray(v) ? v.slice() : v, ease, hold: ease === 'hold' }));
+  s.keys.forEach((k) => { if (k.ease === 'hold') delete k.ease; });
+}
+
+// Slide a layer's position: offsets [[time, dx, dy, ease?], ...] from where it is.
+function slide(layer, list) {
+  const pos = layer.tprop('ADBE Position');
+  const v = pos.valueAtTime(0, true);
+  keys(pos, list.map(([t, dx, dy, ease]) => [t, [v[0] + dx, v[1] + dy, v[2] || 0], ease]));
+}
+
+// The box's rect at time t, in its own layer space.
+function rect(box, t) {
+  return box.boxRect(t);
+}
+
+function items(box) {
+  return box.contentsState.children.find((c) => c.name === 'AutoBox').children[0].children;
+}
+
+function item(box, name) {
+  const c = items(box).find((x) => x.name === name);
+  if (!c) throw new Error(`no ${name} in ${box.name}`);
+  return (mn) => new Prop(c.children.find((x) => x.matchName === mn));
+}
+
+function enabled(box) {
+  return items(box).map((c) => `${c.name}${c.enabled ? '' : ' (off)'}`);
+}
+
+// Every expression in the comp, as "Layer > Property".
+function expressions(comp) {
   const out = [];
   const walk = (l, s) => {
-    if (/^\/\/ AutoBox (box|member)/.test(s.expression)) out.push(`${l.name} > ${s.name}`);
+    if (s.expression) out.push(`${l.name} > ${s.name}`);
     s.children.forEach((c) => walk(l, c));
   };
   comp._layers.forEach((l) => walk(l, l.root));
   return out;
 }
 
-function item(layer, groupName, name) {
-  const g = layer.contentsState.children.find((c) => c.name === groupName);
-  const c = g.children.find((x) => x.matchName === 'ADBE Vectors Group').children.find((x) => x.name === name);
-  if (!c) throw new Error(`no ${name} in ${layer.name}`);
-  return (mn) => new Prop(c.children.find((x) => x.matchName === mn));
+function oldApi(file) {
+  globalThis.AUTOBOX_TEST = {};
+  vm.runInThisContext(fs.readFileSync(path.join(FIXTURES, file), 'utf8'));
+  return globalThis.AUTOBOX_TEST.api;
 }
 
-function rigParts(box) {
-  const g = box.contentsState.children.find((c) => c.name === 'AutoBox');
-  const rect = g.children[0].children.find((c) => c.matchName === 'ADBE Vector Shape - Rect');
-  return { size: rect.children[0].expression };
-}
-
-function effectProp(layer, effectName, mn) {
-  const e = layer.effectsState.children.find((c) => c.name === effectName);
-  return new Prop(e.children.find((c) => c.matchName === mn));
-}
-
-test('script and generated expressions are plain ES3 (Legacy ExtendScript engine)', () => {
+// ---------------------------------------------------------------------------
+// Building a box
+// ---------------------------------------------------------------------------
+test('script and every expression it writes are plain ES3 (Legacy ExtendScript engine)', () => {
   const host = createHost();
   acorn.parse(fs.readFileSync(SCRIPT_PATH, 'utf8'), { ecmaVersion: 3 });
-  for (const kind of ['size', 'position', 'roundness', 'member', 'memberX', 'memberY']) {
-    acorn.parse(host.api.buildExpression(kind), { ecmaVersion: 3 });
-  }
+  for (const kind of ['size', 'position']) acorn.parse(host.api.buildExpression(kind), { ecmaVersion: 3 });
+  acorn.parse(host.api.buildSwitchProbe(3, 1), { ecmaVersion: 3 });
+  acorn.parse(host.api.gradientPointExpression(), { ecmaVersion: 3 });
 });
 
 test('the engine only reads controls that every box gets', () => {
   const host = createHost();
   const expr = host.api.buildExpression('size');
   const names = new Set(host.api.CONTROLS.map((c) => c.name));
-  const used = [...expr.matchAll(/ab_ctl\("([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(used.length > 10);
+  const used = [...expr.matchAll(/ab_ctl(?:Prop)?\("([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(used.length >= 12);
   used.forEach((n) => assert.ok(names.has(n), `missing control ${n}`));
 });
 
-test('Create Box wraps the selection with padding and leaves the layers where they are', () => {
+test('Create Box wraps the selection with padding, leaves the layers alone and gives them no expressions', () => {
   const host = createHost();
   const { comp, title, sub } = scene(host);
   const box = create(host, comp, [title, sub]);
 
   assert.equal(box.name, 'AutoBox 1');
-  assert.deepEqual(comp._layers.map((l) => l.name), ['Title', 'Subtitle', 'AutoBox 1 Stroke', 'AutoBox 1'],
-    'box (and its stroke layer) sit behind its layers');
+  assert.deepEqual(comp._layers.map((l) => l.name), ['Title', 'Subtitle', 'AutoBox 1'], 'one box layer behind its layers');
   assert.equal(title.parent, box);
   assert.equal(sub.parent, box);
   bounds(title.compBounds(), 200, 250, 600, 310, 'title unchanged');
   bounds(sub.compBounds(), 220, 350, 520, 386, 'subtitle unchanged');
   bounds(box.boxCompBounds(), 168, 218, 632, 418, 'box = union + 32px padding');
   near(box.tprop('ADBE Position').value.slice(0, 2), [168, 218], 'box layer sits on its top-left anchor');
-  near(box.boxRect().roundness, 16, 'corner radius');
-  near(box.effectValue('Ignore Hidden'), 1);
-  near(box.effectValue('Layout'), 1);
-  assert.deepEqual(box.effectsState.children.map((e) => e.name), host.api.CONTROLS.map((c) => c.name).concat(['Fill Tint']));
-  assert.deepEqual(box.effectsState.children[0].children[0].items, ['Free (wrap)', 'Vertical Stack', 'Horizontal Stack']);
+  assert.deepEqual(expressions(comp).sort(), [
+    'AutoBox 1 > End Point', 'AutoBox 1 > End Point', 'AutoBox 1 > Position', 'AutoBox 1 > Size',
+    'AutoBox 1 > Start Point', 'AutoBox 1 > Start Point',
+  ], 'only the rect and the gradient points carry expressions');
+  assert.deepEqual(box.effectsState.children.map((e) => e.name), host.api.CONTROLS.map((c) => c.name));
+  assert.deepEqual(box.effectsState.children.find((e) => e.name === 'Morph Ease').children[0].items,
+    ['Linear', 'Ease In', 'Ease Out', 'Ease In Out']);
+  near(box.effectValue('Smart Animate'), 1);
+  near(box.effectValue('Morph Time'), 0.4);
+  near(box.effectValue('Freeze'), 0);
   assert.ok(host.undoGroups.includes('AutoBox: Create Box'));
 });
 
-test('padding, extra padding and corner radius are live', () => {
+test('the look is plain native shape items: strokes above fills, the unused ones switched off', () => {
   const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub]);
-  box.setEffect('Padding', 10);
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title], { fillColor: [1, 0.5, 0], radius: 24 });
+  assert.deepEqual(enabled(box), ['Box Rect', 'Stroke (off)', 'Gradient Stroke (off)', 'Fill', 'Gradient Fill (off)']);
+  near(item(box, 'Fill')('ADBE Vector Fill Color').value, [1, 0.5, 0, 1]);
+  near(item(box, 'Fill')('ADBE Vector Fill Opacity').value, 100);
+  const roundness = item(box, 'Box Rect')('ADBE Vector Rect Roundness');
+  near(roundness.value, 24, 'corner radius is the native Roundness');
+  assert.equal(roundness.s.expression, '');
+  assert.equal(item(box, 'Fill')('ADBE Vector Fill Color').s.expression, '');
+  // A gradient that's off still spans the box, so its eyeball is all it takes.
+  near(item(box, 'Gradient Fill')('ADBE Vector Grad Start Pt').s.value, [-50, 0]);
+  near(item(box, 'Gradient Fill')('ADBE Vector Grad End Pt').s.value, [50, 0]);
+});
+
+test('a stroke and gradients from the panel', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title], { fillType: 2, fillAngle: 0, strokeWidth: 6, strokeType: 3, strokeOpacity: 50 });
+  assert.deepEqual(enabled(box), ['Box Rect', 'Stroke (off)', 'Gradient Stroke', 'Fill (off)', 'Gradient Fill']);
+  const gf = item(box, 'Gradient Fill'), gs = item(box, 'Gradient Stroke');
+  near(gf('ADBE Vector Grad Type').value, 1, 'linear');
+  near(gs('ADBE Vector Grad Type').value, 2, 'radial');
+  near(gs('ADBE Vector Stroke Width').value, 6);
+  near(gs('ADBE Vector Stroke Opacity').value, 50);
+  // Start/End Point are % of the box: 0 degrees runs bottom to top.
+  near(gf('ADBE Vector Grad Start Pt').s.value, [0, 50]);
+  near(gf('ADBE Vector Grad End Pt').s.value, [0, -50]);
+  const r = rect(box, 0);
+  near(gf('ADBE Vector Grad Start Pt').value, [(r.l + r.r) / 2, r.b]);
+  near(gf('ADBE Vector Grad End Pt').value, [(r.l + r.r) / 2, r.t]);
+  near(gs('ADBE Vector Grad Start Pt').value, [(r.l + r.r) / 2, (r.t + r.b) / 2], 'radial from the center');
+  near(gs('ADBE Vector Grad End Pt').value, [r.r, r.b], 'to the corner');
+  // The gradient stretches as the box does.
+  box.setEffect('Padding', 50);
+  const r2 = rect(box, 0);
+  near(gf('ADBE Vector Grad End Pt').value, [(r2.l + r2.r) / 2, r2.t]);
+  // 45 degrees: corner to corner.
+  near(host.api.gradientPoints(2, 45)[0], [-50, 50]);
+  near(host.api.gradientPoints(2, 45)[1], [50, -50]);
+});
+
+test('padding, extra padding and min size are live; min size grows away from Box Anchor', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title], { padding: 10 });
+  bounds(box.boxCompBounds(), 190, 240, 610, 320);
   box.setEffect('Extra Left', 30);
   box.setEffect('Extra Bottom', 5);
-  bounds(box.boxCompBounds(), 160, 240, 610, 401);
-  box.setEffect('Corner Radius', 500);
-  near(box.boxRect().roundness, 161 / 2, 'radius is clamped to half the short side');
-});
-
-test('solid fill and stroke follow the Effect Controls', () => {
-  const host = createHost();
-  const { comp, title } = scene(host);
-  const box = create(host, comp, [title], { fillColor: [1, 0.5, 0], strokeWidth: 0 });
-  const fill = item(box, 'AutoBox', 'Fill');
-  near(fill('ADBE Vector Fill Color').value, [1, 0.5, 0, 1]);
-  near(fill('ADBE Vector Fill Opacity').value, 100);
-  near(item(box, 'AutoBox', 'Linear Gradient Fill')('ADBE Vector Fill Opacity').value, 0);
-  near(item(box, 'AutoBox', 'Radial Gradient Fill')('ADBE Vector Fill Opacity').value, 0);
-  near(effectProp(box, 'Fill Tint', 'ADBE Tint-0003').value, 0, 'no tint on a solid fill');
-
-  const sl = comp.layer('AutoBox 1 Stroke');
-  assert.equal(sl.parent, box);
-  assert.equal(sl.index, box.index - 1, 'stroke layer sits right above the box');
-  // Solid on solid: drawn inside the box (above the fills) so both fade as one layer.
-  const group = box.contentsState.children[0].children[0].children.map((c) => c.name);
-  assert.deepEqual(group, ['Box Rect', 'Stroke', 'Fill', 'Linear Gradient Fill', 'Radial Gradient Fill']);
-  const stroke = item(box, 'AutoBox', 'Stroke');
-  const layerStroke = item(sl, 'AutoBox Stroke', 'Stroke');
-  near(stroke('ADBE Vector Stroke Opacity').value, 0, 'no stroke at width 0');
-  box.setEffect('Stroke Width', 4);
-  box.setEffect('Stroke Color', [0, 1, 0, 1]);
-  near(stroke('ADBE Vector Stroke Opacity').value, 100);
-  near(layerStroke('ADBE Vector Stroke Opacity').value, 0, 'the stroke layer stays empty');
-  near(stroke('ADBE Vector Stroke Width').value, 4);
-  near(stroke('ADBE Vector Stroke Color').value, [0, 1, 0, 1]);
-  box.setEffect('Stroke Opacity', 40);
-  near(stroke('ADBE Vector Stroke Opacity').value, 40);
-  box.setEffect('Fill Type', 2);
-  near(stroke('ADBE Vector Stroke Opacity').value, 0, 'a gradient fill would tint it, so...');
-  near(layerStroke('ADBE Vector Stroke Opacity').value, 40, '...it moves to the stroke layer');
-  near(layerStroke('ADBE Vector Stroke Color').value, [0, 1, 0, 1]);
-  box.setEffect('Fill Type', 1);
-
-  bounds(sl.boxCompBounds(), 168, 218, 632, 342, 'stroke layer traces the box');
-  box.tprop('ADBE Opacity').setValue(30);
-  near(sl.tprop('ADBE Opacity').value, 30, 'stroke layer follows the box opacity');
-  box.enabled = false;
-  near(sl.tprop('ADBE Opacity').value, 0, '...and its visibility');
-  box.enabled = true;
-  box.setEffect('Stroke Width', 60);
-  bounds(box.boxCompBounds(), 168, 218, 632, 342, 'the box never wraps its own stroke');
-});
-
-test('gradient fills span the box at any angle and are recolored by Tint', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { fillType: 2, fillAngle: 90, fillColor: [1, 0, 0], fillColor2: [0, 0, 1] });
-  // Box rect in box space: 0..464 x 0..200, center (232, 100).
-  const lin = item(box, 'AutoBox', 'Linear Gradient Fill');
-  near(item(box, 'AutoBox', 'Fill')('ADBE Vector Fill Opacity').value, 0);
-  near(lin('ADBE Vector Fill Opacity').value, 100);
-  near(lin('ADBE Vector Grad Start Pt').value, [0, 100], '90 degrees runs left to right');
-  near(lin('ADBE Vector Grad End Pt').value, [464, 100]);
-  near(effectProp(box, 'Fill Tint', 'ADBE Tint-0003').value, 100);
-  near(effectProp(box, 'Fill Tint', 'ADBE Tint-0002').value, [1, 0, 0, 1], 'white (start) -> Fill Color');
-  near(effectProp(box, 'Fill Tint', 'ADBE Tint-0001').value, [0, 0, 1, 1], 'black (end) -> Fill Color 2');
-  assert.throws(() => lin('ADBE Vector Grad Colors').value, /no value/, 'gradient colors are never touched');
-
-  box.setEffect('Fill Angle', 180);
-  near(lin('ADBE Vector Grad Start Pt').value, [232, 0], '180 degrees runs top to bottom');
-  near(lin('ADBE Vector Grad End Pt').value, [232, 200]);
-  box.setEffect('Fill Angle', 45);
-  const half = (464 * Math.SQRT1_2 + 200 * Math.SQRT1_2) / 2;
-  near(lin('ADBE Vector Grad Start Pt').value, [232 - half * Math.SQRT1_2, 100 + half * Math.SQRT1_2]);
-  near(lin('ADBE Vector Grad End Pt').value, [232 + half * Math.SQRT1_2, 100 - half * Math.SQRT1_2]);
-
-  title.setText({ left: 0, top: -50, width: 600, height: 60 });
-  box.setEffect('Fill Angle', 90);
-  near(lin('ADBE Vector Grad End Pt').value, [664, 100], 'follows the box as it grows');
-
-  box.setEffect('Fill Type', 3);
-  const rad = item(box, 'AutoBox', 'Radial Gradient Fill');
-  near(lin('ADBE Vector Fill Opacity').value, 0);
-  near(rad('ADBE Vector Fill Opacity').value, 100);
-  assert.equal(rad('ADBE Vector Grad Type').value, 2);
-  near(rad('ADBE Vector Grad Start Pt').value, [332, 100], 'radial starts at the center');
-  near(rad('ADBE Vector Grad End Pt').value, [332 + Math.hypot(664, 200) / 2, 100], '...and reaches the corners');
-});
-
-test('gradient strokes live on the stroke layer and reach its outer edge', () => {
-  const host = createHost();
-  const { comp, title } = scene(host);
-  const box = create(host, comp, [title], { strokeType: 2, strokeWidth: 10, strokeAngle: 90, strokeColor: [1, 1, 0], strokeColor2: [0, 1, 1] });
-  const sl = comp.layer('AutoBox 1 Stroke');
-  const lin = item(sl, 'AutoBox Stroke', 'Linear Gradient Stroke');
-  near(item(sl, 'AutoBox Stroke', 'Stroke')('ADBE Vector Stroke Opacity').value, 0);
-  near(lin('ADBE Vector Stroke Opacity').value, 100);
-  near(lin('ADBE Vector Stroke Width').value, 10);
-  // Box rect 0..464 x 0..124; the stroke reaches 5px past it.
-  near(lin('ADBE Vector Grad Start Pt').value, [-5, 62]);
-  near(lin('ADBE Vector Grad End Pt').value, [469, 62]);
-  near(effectProp(sl, 'Stroke Tint', 'ADBE Tint-0003').value, 100);
-  near(effectProp(sl, 'Stroke Tint', 'ADBE Tint-0002').value, [1, 1, 0, 1]);
-  near(effectProp(sl, 'Stroke Tint', 'ADBE Tint-0001').value, [0, 1, 1, 1]);
-  near(effectProp(box, 'Fill Tint', 'ADBE Tint-0003').value, 0, 'the fill keeps its solid color');
-  box.setEffect('Stroke Type', 3);
-  near(lin('ADBE Vector Stroke Opacity').value, 0);
-  near(item(sl, 'AutoBox Stroke', 'Radial Gradient Stroke')('ADBE Vector Stroke Opacity').value, 100);
-  box.setEffect('Stroke Width', 0);
-  near(item(sl, 'AutoBox Stroke', 'Radial Gradient Stroke')('ADBE Vector Stroke Opacity').value, 0, 'width 0 hides it');
-});
-
-test('a nested box counts its stroke in an outer stack', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const inner = create(host, comp, [title], { padding: 10, strokeWidth: 20 });
-  const outer = create(host, comp, [inner, sub], { layout: 2, padding: 20, gap: 8 });
-  const ib = inner.boxCompBounds(), sb = sub.compBounds(), ob = outer.boxCompBounds();
-  near(ob.l, ib.l - 10 - 20, 'outer padding starts at the outside of the stroke');
-  near(sb.t, ib.b + 10 + 8, 'gap starts below the stroke');
-  assert.equal(comp.layer('AutoBox 1 Stroke').parent, inner);
-});
-
-test('vertical stack: gap, alignment and anchor', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-
-  bounds(title.compBounds(), 200, 250, 600, 310, 'title first');
-  bounds(sub.compBounds(), 200, 326, 500, 362, 'subtitle 16px below');
-  bounds(box.boxCompBounds(), 168, 218, 632, 394);
-
-  box.setEffect('Align', 2);
-  bounds(sub.compBounds(), 250, 326, 550, 362, 'centered');
-  box.setEffect('Align', 3);
-  bounds(sub.compBounds(), 300, 326, 600, 362, 'right-aligned');
-
-  box.setEffect('Gap', 40);
-  bounds(sub.compBounds(), 300, 350, 600, 386);
-
-  box.setEffect('Box Anchor', 5); // Center: the box layer position is the box center
-  bounds(box.boxCompBounds(), 168 - 232, 218 - 100, 168 + 232, 218 + 100);
-  bounds(title.compBounds(), 168 - 200, 218 - 68, 168 + 200, 218 - 8);
-});
-
-test('stack order follows the timeline and updates when layers are reordered', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  sub.moveToBeginning();
-  bounds(sub.compBounds(), 200, 250, 500, 286, 'subtitle now first');
-  bounds(title.compBounds(), 200, 302, 600, 362);
-  bounds(box.boxCompBounds(), 168, 218, 632, 394);
-});
-
-test('horizontal stack, justify and min size', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 3 });
-  bounds(title.compBounds(), 200, 250, 600, 310);
-  bounds(sub.compBounds(), 616, 250, 916, 286);
-  bounds(box.boxCompBounds(), 168, 218, 948, 342);
-
-  box.setEffect('Align', 2);
-  bounds(sub.compBounds(), 616, 262, 916, 298);
-
-  box.setEffect('Min Width', 1000);
-  bounds(box.boxCompBounds(), 168, 218, 1168, 342);
-  bounds(title.compBounds(), 200, 250, 600, 310, 'justify start');
-  box.setEffect('Justify', 2);
-  bounds(title.compBounds(), 310, 250, 710, 310, 'justify center');
-  box.setEffect('Justify', 3);
-  bounds(title.compBounds(), 420, 250, 820, 310, 'justify end');
-  box.setEffect('Justify', 4);
-  bounds(title.compBounds(), 200, 250, 600, 310, 'space between');
-  bounds(sub.compBounds(), 836, 262, 1136, 298);
-});
-
-test('free layout min size grows away from the anchor', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub]);
+  bounds(box.boxCompBounds(), 160, 240, 610, 325);
   box.setEffect('Min Width', 600);
-  box.setEffect('Min Height', 300);
-  bounds(box.boxCompBounds(), 168, 218, 768, 518);
-  box.setEffect('Box Anchor', 9);
-  bounds(box.boxCompBounds(), 32, 118, 632, 418);
+  bounds(box.boxCompBounds(), 160, 240, 760, 325, 'Top Left anchor: grows right');
+  box.setEffect('Box Anchor', 6);
+  bounds(box.boxCompBounds(), 10, 240, 610, 325, 'Right anchor: grows left');
+  box.setEffect('Box Anchor', 5);
+  box.setEffect('Min Height', 285);
+  bounds(box.boxCompBounds(), 85, 140, 685, 425, 'Center: grows both ways');
 });
 
-test('the box and the stack follow text that changes over time', () => {
+test('Apply to Box pushes the panel onto the box but leaves animated properties alone', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title]);
+  const color = item(box, 'Fill')('ADBE Vector Fill Color');
+  color.setValueAtTime(0, [1, 0, 0, 1]);
+  color.setValueAtTime(1, [0, 0, 1, 1]);
+  const pad = box.effectsState.children.find((e) => e.name === 'Padding').children[0];
+  new Prop(pad).setValueAtTime(0, 10);
+  comp.select(box);
+  host.api.applySettings(settings(host, { padding: 50, radius: 40, fillColor: [0, 1, 0], fillOpacity: 60, minWidth: 900, morphTime: 1.5 }));
+  assert.deepEqual(host.alerts, []);
+  near(color.valueAtTime(1, false), [0, 0, 1, 1], 'keyframed color kept');
+  assert.equal(pad.keys.length, 1, 'keyframed control kept');
+  near(item(box, 'Fill')('ADBE Vector Fill Opacity').value, 60);
+  near(item(box, 'Box Rect')('ADBE Vector Rect Roundness').value, 40);
+  near(box.effectValue('Min Width'), 900);
+  near(box.effectValue('Morph Time'), 1.5);
+  // Freeze isn't a panel setting: Apply never touches it.
+  box.setEffect('Freeze', 1);
+  host.api.applySettings(settings(host));
+  near(box.effectValue('Freeze'), 1);
+});
+
+test('gradient colors are never touched (scripts cannot read or set them)', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title], { fillType: 3, strokeType: 2, strokeWidth: 2 });
+  comp.select(box);
+  host.api.applySettings(settings(host, { fillType: 2 }));
+  host.confirmAnswer = true;
+  host.api.releaseBoxes();
+  // The mock throws on any access to the Colors property; reaching here means none happened.
+  assert.deepEqual(host.alerts, []);
+});
+
+test('shape items are only ever appended: the mock fails like After Effects after a moveTo', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title]);
+  const vec = box.contentsState.children[0].children[0];
+  new Prop(vec.children[1]).moveTo(5);
+  assert.throws(() => new Prop(box.effectsState).addProperty('ADBE Tint'),
+    /internal verification failure, sorry! \{stream at index matchName="ADBE Vector Graphic - G-Stroke" \(mismatch with resultP, expected "ADBE Vector Graphic - Fill"\)\}/);
+});
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+test('Matte makes the box its layers\' track matte and keeps it visible; again takes the mattes off', () => {
   const host = createHost();
   const { comp, title, sub } = scene(host);
-  title.setText((t) => ({ left: 0, top: -50, width: 400 + 100 * t, height: 60 + 40 * t }));
   const box = create(host, comp, [title, sub]);
-  bounds(box.boxCompBounds(0), 168, 218, 632, 418);
-  bounds(box.boxCompBounds(1), 168, 218, 732, 418, 'free: grows with the text');
-
-  box.setEffect('Layout', 2);
-  box.setEffect('Align', 2);
-  bounds(sub.compBounds(1), 300, 366, 600, 402, 'stack reflows at t=1');
-  bounds(box.boxCompBounds(1), 168, 218, 732, 434);
+  const icon = comp.layers.addShapeMember('Icon', { position: [180, 280], rect: { left: 0, top: 0, width: 10, height: 10 } });
+  icon.parent = title; // rides along
+  comp.select(title);
+  host.api.matteBoxes();
+  assert.deepEqual(host.alerts, []);
+  for (const l of [title, sub, icon]) {
+    assert.equal(l.trackMatteLayer, box, `${l.name} uses the box`);
+    assert.equal(l.trackMatteType, TRACK_MATTE.ALPHA);
+  }
+  assert.equal(box.enabled, true, 'the box still shows as the background');
+  assert.ok(host.undoGroups.includes('AutoBox: Matte'));
+  comp.select(box);
+  host.api.matteBoxes();
+  for (const l of [title, sub, icon]) assert.equal(l.trackMatteLayer, null);
+  assert.equal(box.enabled, true);
 });
 
-test('hidden layers leave the layout unless Ignore Hidden is off', () => {
+test('Matte explains when After Effects is older than 2023', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title]);
+  features.setTrackMatte = false;
+  try {
+    comp.select(box);
+    host.api.matteBoxes();
+    assert.match(host.alerts.pop(), /After Effects 2023/);
+    assert.equal(title.trackMatteLayer, null);
+  } finally {
+    features.setTrackMatte = true;
+  }
+});
+
+test('Add to Box and Remove (layers never jump)', () => {
   const host = createHost();
   const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  sub.enabled = false;
+  const box = create(host, comp, [title]);
   bounds(box.boxCompBounds(), 168, 218, 632, 342);
-  box.setEffect('Ignore Hidden', 0);
-  bounds(box.boxCompBounds(), 168, 218, 632, 394);
-  box.setEffect('Ignore Hidden', 1);
-  sub.enabled = true;
-  sub.inPoint = 2;
-  bounds(box.boxCompBounds(0), 168, 218, 632, 342, 'before its in point');
-  bounds(box.boxCompBounds(3), 168, 218, 632, 394, 'after its in point');
-});
-
-test('creating a box mid-animation still measures layers that are not on screen yet', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  sub.inPoint = 5;
-  const box = create(host, comp, [title, sub]);
-  bounds(box.boxCompBounds(6), 168, 218, 632, 418);
-  near(box.inPoint, 0);
-});
-
-test('scaled members and a rotated box', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  title.tprop('ADBE Scale').setValue([50, 50, 100]);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  bounds(title.compBounds(), 200, 275, 400, 305, 'title at half size');
-  bounds(sub.compBounds(), 200, 321, 500, 357);
-  bounds(box.boxCompBounds(), 168, 243, 532, 389);
-
-  box.setEffect('Layout', 1);
-  const before = box.boxRect();
-  box.tprop('ADBE Rotate Z').setValue(30);
-  const after = box.boxRect();
-  near([after.l, after.t, after.r, after.b], [before.l, before.t, before.r, before.b], 'rect is stable in box space');
-});
-
-test('layers with separated position dimensions', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  sub.tprop('ADBE Position').dimensionsSeparated = true;
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  assert.match(sub.tprop('ADBE Position_0').expression, /^\/\/ AutoBox member/);
-  assert.match(sub.tprop('ADBE Position_1').expression, /^\/\/ AutoBox member/);
-  bounds(sub.compBounds(), 200, 326, 500, 362);
-  bounds(box.boxCompBounds(), 168, 218, 632, 394);
-});
-
-test('a member parented to another member rides along instead of taking a slot', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const dot = comp.layers.addShapeMember('Dot', { position: [180, 280], rect: { left: -5, top: -5, width: 10, height: 10 } });
-  dot.parent = title;
-  const box = create(host, comp, [dot, title, sub], { layout: 2 });
-  assert.equal(dot.parent, title);
-  // The dot widened the selection, so the stack starts 25px further left.
-  bounds(title.compBounds(), 175, 250, 575, 310);
-  bounds(sub.compBounds(), 175, 326, 475, 362, 'dot takes no slot');
-  bounds(dot.compBounds(), 150, 275, 160, 285, 'dot stays with the title');
-  box.setEffect('Align', 3);
-  bounds(dot.compBounds(), 150, 275, 160, 285);
-  bounds(sub.compBounds(), 275, 326, 575, 362);
-});
-
-test('Add to Box and Remove', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title], { layout: 2 });
-  bounds(box.boxCompBounds(), 168, 218, 632, 342);
-
   comp.select(box, sub);
   host.api.addToBox();
   assert.deepEqual(host.alerts, []);
   assert.equal(sub.parent, box);
-  bounds(sub.compBounds(), 200, 326, 500, 362);
-  bounds(box.boxCompBounds(), 168, 218, 632, 394);
-
+  bounds(sub.compBounds(), 220, 350, 520, 386);
+  bounds(box.boxCompBounds(), 168, 218, 632, 418);
   comp.select(sub);
   host.api.removeFromBox();
-  assert.deepEqual(host.alerts, []);
   assert.equal(sub.parent, null);
-  assert.equal(sub.tprop('ADBE Position').expression, '');
-  bounds(sub.compBounds(), 200, 326, 500, 362, 'removed layer keeps its place');
-  bounds(box.boxCompBounds(), 168, 218, 632, 342, 'box shrinks back');
-  assert.equal(host.undoDepth, 0);
-
-  comp.select(box);
-  host.api.selectMembers();
-  assert.deepEqual(comp.selectedLayers.map((l) => l.name), ['Title']);
-});
-
-test('Apply to Box pushes panel settings to the selected box', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub]);
-  comp.select(title); // a member is enough to find its box
-  host.api.applySettings(settings(host, { padding: 8, layout: 2, radius: 4 }));
-  near(box.effectValue('Padding'), 8);
-  near(box.effectValue('Layout'), 2);
-  bounds(box.boxCompBounds(), 168, 218, 584, 346, 'stack grows from the top-left anchor');
-  near(box.boxRect().roundness, 4);
-});
-
-test('Release bakes the animated layout into keyframes', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host, { comp: { duration: 2, frameRate: 10 } });
-  title.setText((t) => ({ left: 0, top: -50, width: 400 + (t >= 1 ? 100 : 0), height: 60 }));
-  const box = create(host, comp, [title, sub], { layout: 2, align: 2 });
-  const sample = (t) => ({ sub: sub.compBounds(t), box: box.boxCompBounds(t) });
-  const expected = [0, 0.5, 1, 1.5].map(sample);
-
-  comp.select(box);
-  host.api.releaseBoxes();
-  assert.deepEqual(host.alerts, []);
-  assert.equal(host.confirms.length, 1);
-  assert.deepEqual(rigExpressions(comp), [], 'no AutoBox expressions left');
-  [0, 0.5, 1, 1.5].forEach((t, i) => {
-    const got = sample(t);
-    bounds(got.sub, expected[i].sub.l, expected[i].sub.t, expected[i].sub.r, expected[i].sub.b, `subtitle @${t}`);
-    bounds(got.box, expected[i].box.l, expected[i].box.t, expected[i].box.r, expected[i].box.b, `box @${t}`);
-  });
-  assert.equal(title.tprop('ADBE Position').numKeys, 0, 'title never moved: static value');
-  assert.ok(sub.tprop('ADBE Position').numKeys >= 2, 'subtitle moved: keyframed');
-  assert.ok(sub.tprop('ADBE Position').numKeys <= 4, 'only frames where it changes are keyed');
-  assert.deepEqual(box.effectsState.children.map((e) => e.name), host.api.CONTROLS.filter((c) => c.keep).map((c) => c.name).concat(['Fill Tint']),
-    'only the fill and stroke controls stay');
-  comp.select(box);
-  host.api.selectMembers();
-  assert.match(host.alerts.pop(), /Select a box layer/, 'a released box is no longer a box');
-});
-
-test('Release keeps keyframes on free-layout members', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub]);
-  const pos = sub.tprop('ADBE Position');
-  pos.setValueAtTime(0, [52, 162, 0]);
-  pos.setValueAtTime(1, [100, 162, 0]);
-  comp.select(box);
-  host.api.releaseBoxes();
-  assert.equal(pos.numKeys, 2);
-  assert.equal(pos.expression, '');
-});
-
-test('boxes nest without expression cycles', () => {
-  const host = createHost();
-  const comp = host.newComp();
-  const sub = comp.layers.addText('Subtitle', { position: [100, 200], rect: { left: 0, top: -30, width: 500, height: 36 } });
-  const title = comp.layers.addText('Title', { position: [140, 110], rect: { left: 0, top: -50, width: 300, height: 60 } });
-  const icon = comp.layers.addShapeMember('Icon', { position: [100, 90], rect: { left: -20, top: -20, width: 40, height: 40 } });
-
-  const inner = create(host, comp, [icon, title], { layout: 3, align: 2, padding: 10, gap: 12 });
-  const outer = create(host, comp, [inner, sub], { layout: 2, padding: 20, gap: 8 });
-  assert.equal(outer.name, 'AutoBox 2');
-  assert.equal(inner.parent, outer);
-  assert.equal(title.parent, inner);
-
-  const ib = inner.boxCompBounds(), ob = outer.boxCompBounds(), sb = sub.compBounds();
-  near(ib.r - ib.l, 10 + 40 + 12 + 300 + 10, 'inner width');
-  near(ib.b - ib.t, 10 + 60 + 10, 'inner height');
-  near(ob.l, ib.l - 20);
-  near(ob.t, ib.t - 20);
-  near(sb.t, ib.b + 8, 'subtitle stacks under the inner box');
-  near(ob.r - ob.l, 20 + 500 + 20, 'outer fits the wider subtitle');
-  near(ob.b, sb.b + 20);
-
-  title.setText({ left: 0, top: -50, width: 700, height: 60 });
-  const ob2 = outer.boxCompBounds(), ib2 = inner.boxCompBounds();
-  near(ib2.r - ib2.l, 10 + 40 + 12 + 700 + 10, 'inner grows');
-  near(ob2.r - ob2.l, ib2.r - ib2.l + 40, 'outer grows with it');
-
-  inner.setEffect('Layout', 1);
-  outer.setEffect('Layout', 1);
-  outer.boxCompBounds();
-});
-
-test('editing text, renaming and reordering never break a box', () => {
-  const host = createHost();
-  const comp = host.newComp();
-  // Never-renamed text layers: their names follow their text, like in After Effects.
-  const sub = comp.layers.addText('Subtitle', { isNameSet: false, text: 'Hello', position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-  const title = comp.layers.addText('Title', { isNameSet: false, text: 'Hello', position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  assert.equal(title.isNameSet, false, 'AutoBox no longer renames layers');
-  bounds(box.boxCompBounds(), 168, 218, 632, 394);
-
-  title.sourceText = 'A much longer headline';
-  title.setText({ left: 0, top: -50, width: 700, height: 60 });
-  assert.equal(title.name, 'A much longer headline');
-  bounds(box.boxCompBounds(), 168, 218, 932, 394, 'box follows the new text');
-  bounds(sub.compBounds(), 200, 326, 500, 362);
-
-  sub.sourceText = 'Line one\rLine two';
-  sub.setText({ left: 0, top: -30, width: 320, height: 80 });
-  bounds(box.boxCompBounds(), 168, 218, 932, 438);
-
-  title.name = 'Headline';
-  box.name = 'Lower Third';
-  bounds(box.boxCompBounds(), 168, 218, 932, 438, 'renames are fine');
-  sub.moveToBeginning();
-  bounds(sub.compBounds(), 200, 250, 520, 330, 'reorder restacks');
-});
-
-test('duplicating a box together with its layers gives an independent copy', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  // Duplicate all three; After Effects keeps the copies parented to the copied box.
-  const box2 = box.duplicate(), title2 = title.duplicate(), sub2 = sub.duplicate();
-  title2.setParentWithJump(box2);
-  sub2.setParentWithJump(box2);
-  box2.tprop('ADBE Position').setValue([168, 618, 0]);
-  title2.setText({ left: 0, top: -50, width: 900, height: 60 });
-  bounds(box.boxCompBounds(), 168, 218, 632, 394, 'original untouched');
-  bounds(box2.boxCompBounds(), 168, 618, 1132, 794, 'copy follows its own layers');
-  bounds(sub2.compBounds(), 200, 726, 500, 762);
-});
-
-test('parenting a layer to a box adds it', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title]);
-  sub.parent = box; // pick whip
-  bounds(box.boxCompBounds(), 168, 218, 632, 418, 'free layout wraps it straight away');
-  box.setEffect('Layout', 2);
-  comp.select(box);
-  host.api.applySettings(settings(host, { layout: 2 }));
-  assert.match(sub.tprop('ADBE Position').expression, /^\/\/ AutoBox member/, 'Apply to Box rigs new children');
-  bounds(sub.compBounds(), 200, 326, 500, 362);
-});
-
-test('a deleted member does not break the box', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  sub.remove();
+  bounds(sub.compBounds(), 220, 350, 520, 386);
   bounds(box.boxCompBounds(), 168, 218, 632, 342);
-  bounds(title.compBounds(), 200, 250, 600, 310);
+  assert.deepEqual(expressions(comp).filter((n) => !n.startsWith('AutoBox')), []);
 });
 
-test('cameras, nulls and layers already in a box are skipped', () => {
+test('Release bakes the box\'s size and gradients, removes the rig and In Box checkboxes, keeps the look', () => {
   const host = createHost();
   const { comp, title, sub } = scene(host);
-  const cam = comp.layers.addCamera('Camera 1');
-  const nul = comp.layers.addNull();
-  comp.select(cam, nul, title);
-  host.api.createBox(settings(host));
-  assert.equal(host.alerts.length, 1);
-  assert.match(host.alerts[0], /Camera 1/);
-  assert.match(host.alerts[0], /Null 1/);
-  host.alerts.length = 0;
-
-  // Selecting layers that are already in a box moves them to the new one.
-  comp.select(title, sub);
-  host.api.createBox(settings(host));
-  assert.deepEqual(host.alerts, []);
-  const box2 = comp.layer('AutoBox 2');
-  assert.equal(title.parent, box2);
-  assert.equal(sub.parent, box2);
-  bounds(box2.boxCompBounds(), 168, 218, 632, 418);
-  bounds(comp.layer('AutoBox 1').boxRect(), 0, 0, 0, 0, 'the old box is empty');
+  const box = create(host, comp, [title, sub], { fillType: 2, anchor: 5 });
+  slide(title, [[1, 0, 100, smooth], [1.5, 0, 0]]);
+  comp.select(title);
+  host.api.addInBoxToggles();
+  const live = [0, 1.2, 1.5, 3].map((t) => rect(box, t));
+  const grad = [0, 1.2, 3].map((t) => item(box, 'Gradient Fill')('ADBE Vector Grad End Pt').valueAtTime(t, false));
+  comp.select(box);
+  host.confirmAnswer = true;
+  host.api.releaseBoxes();
+  assert.deepEqual(box.effectsState.children.map((e) => e.name), []);
+  assert.deepEqual(title.effectsState.children.map((e) => e.name), [], 'In Box removed');
+  assert.deepEqual(expressions(comp), []);
+  [0, 1.2, 1.5, 3].forEach((t, i) => {
+    const r = rect(box, t);
+    near([r.l, r.t, r.r, r.b], [live[i].l, live[i].t, live[i].r, live[i].b], `baked at ${t}`);
+  });
+  [0, 1.2, 3].forEach((t, i) => near(item(box, 'Gradient Fill')('ADBE Vector Grad End Pt').valueAtTime(t, false), grad[i]));
+  assert.deepEqual(enabled(box), ['Box Rect', 'Stroke (off)', 'Gradient Stroke (off)', 'Fill (off)', 'Gradient Fill']);
 });
 
-test('nothing selected gives a friendly message', () => {
+test('Select Members selects the box\'s layers, riders included', () => {
   const host = createHost();
-  const { comp } = scene(host);
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub]);
+  const icon = comp.layers.addShapeMember('Icon', { position: [180, 280] });
+  icon.parent = title;
+  comp.select(box);
+  host.api.selectMembers();
+  assert.deepEqual(comp.selectedLayers.map((l) => l.name).sort(), ['Icon', 'Subtitle', 'Title']);
+});
+
+test('nothing selected, or no box, gives a friendly message', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
   comp.select();
   host.api.createBox(settings(host));
-  assert.match(host.alerts[0], /Select the layers/);
-  host.app.project.activeItem = null;
-  host.api.createBox(settings(host));
-  assert.match(host.alerts[1], /Open a composition/);
+  assert.match(host.alerts.pop(), /Select the layers/);
+  for (const fn of ['applySettings', 'selectMembers', 'matteBoxes', 'releaseBoxes']) {
+    comp.select(title);
+    host.api[fn](settings(host));
+    assert.match(host.alerts.pop(), /Select a box layer/, fn);
+  }
+  comp.select(title);
+  host.api.addInBoxToggles();
+  assert.match(host.alerts.pop(), /Select layers inside a box/);
+  comp.select(title);
+  host.api.addToBox();
+  assert.match(host.alerts.pop(), /Select a box layer and the layers/);
 });
 
-test('the panel builds, remembers settings and its buttons work', () => {
+test('cameras and nulls are skipped; a camera parented to a box cannot break it', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const cam = comp.layers.addCamera('Camera 1');
+  const nul = comp.layers.addNull();
+  comp.select(title, cam, nul);
+  host.api.createBox(settings(host));
+  assert.match(host.alerts.pop(), /Camera 1 — cameras, lights, nulls/);
+  const box = comp.layer('AutoBox 1');
+  cam.parent = box;
+  bounds(box.boxCompBounds(), 168, 218, 632, 342);
+  assert.equal(item(box, 'Box Rect')('ADBE Vector Rect Size').s.expressionError, '');
+});
+
+test('editing text, renaming, reordering and duplicating layers never break a box', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub]);
+  title.sourceText = 'A much longer title';
+  title.setText({ left: 0, top: -50, width: 700, height: 60 });
+  bounds(box.boxCompBounds(), 168, 218, 932, 418, 'follows the edited text');
+  sub.name = 'Renamed';
+  sub.moveToBeginning();
+  const copy = sub.duplicate();
+  copy.tprop('ADBE Position').s.value = [52, 252, 0]; // box space: comp 220, 470
+  bounds(box.boxCompBounds(), 168, 218, 932, 508, 'the duplicate is parented to the box, so it counts');
+  sub.remove();
+  bounds(box.boxCompBounds(), 168, 218, 932, 508);
+});
+
+test('the ScriptUI panel builds, remembers settings and its buttons work', () => {
   const host = createHost();
   const { comp, title, sub } = scene(host);
   const panel = new Panel();
@@ -604,434 +398,471 @@ test('the panel builds, remembers settings and its buttons work', () => {
   const radius = find((c) => c.type === 'edittext' && /Corner radius/.test(c.helpTip));
   radius.text = '24';
   radius.onChange.call(radius);
-  const mode = find((c) => c.type === 'dropdownlist' && c.items.length === 3 && c.items[0].text === 'Free (wrap)');
-  mode.selection = 1;
-  mode.onChange.call(mode);
+  const morph = find((c) => c.type === 'slider' && /Morph Time/.test(c.helpTip));
+  morph.value = 1.234;
+  morph.onChange.call(morph);
+  const ease = find((c) => c.type === 'dropdownlist' && c.items.length === 4 && c.items[0].text === 'Linear');
+  ease.selection = 0;
+  ease.onChange.call(ease);
+  const smart = find((c) => c.type === 'checkbox' && c.text === 'Smart Animate');
+  smart.value = false;
+  smart.onClick.call(smart);
 
   comp.select(title, sub);
   const button = (label) => find((c) => c.type === 'button' && c.text === label);
   button('Create Box').onClick();
   assert.deepEqual(host.alerts, []);
   const box = comp.layer('AutoBox 1');
-  near(box.boxRect().roundness, 24);
-  near(box.effectValue('Layout'), 2);
+  near(item(box, 'Box Rect')('ADBE Vector Rect Roundness').value, 24);
+  near(box.effectValue('Morph Time'), 1.23);
+  near(box.effectValue('Morph Ease'), 1);
+  near(box.effectValue('Smart Animate'), 0);
 
   button('Select Members').onClick();
   assert.deepEqual(comp.selectedLayers.map((l) => l.name), ['Title', 'Subtitle']);
+  button('In Box').onClick();
+  assert.ok(title.effectsState.children.some((e) => e.name === 'In Box'));
+  comp.select(box);
+  button('Matte').onClick();
+  assert.equal(title.trackMatteLayer, box);
   button('?').onClick();
-  assert.match(host.alerts.pop(), /CREATE BOX/);
+  assert.match(host.alerts.pop(), /SMART ANIMATE/);
 
   const panel2 = new Panel();
   host.api.buildUI(panel2);
   assert.equal(panel2.find((c) => c.type === 'edittext' && /Corner radius/.test(c.helpTip)).text, '24');
-
   const swatch = panel2.find((c) => c.type === 'button' && /^Fill color/.test(c.helpTip));
   swatch.onDraw();
   swatch.onClick();
   comp.select(box);
   panel2.find((c) => c.type === 'button' && c.text === 'Apply to Box').onClick();
-  near(box.effectValue('Fill Color'), [0x33 / 255, 0x66 / 255, 0x99 / 255, 1]);
+  near(item(box, 'Fill')('ADBE Vector Fill Color').value, [0x33 / 255, 0x66 / 255, 0x99 / 255, 1]);
   assert.deepEqual(host.alerts, []);
 });
 
-test('deleting the box leaves its layers usable', () => {
+test('the CEP entry point runs actions by name and reports errors', () => {
   const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  box.remove();
-  assert.equal(sub.parent, null);
-  sub.compBounds(); // member expressions fall back to the layer's own position
-  comp.select(sub);
-  host.api.removeFromBox();
-  assert.deepEqual(host.alerts, []);
-  assert.equal(sub.tprop('ADBE Position').expression, '');
-});
-
-test('a camera or light parented to a box cannot break it', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title, sub], { layout: 2 });
-  const cam = comp.layers.addCamera('Camera 1');
-  cam.parent = box;
-  bounds(box.boxCompBounds(), 168, 218, 632, 394, 'stack ignores the camera');
-  box.setEffect('Layout', 1);
-  bounds(box.boxCompBounds(), 168, 218, 632, 418, 'free layout ignores it too');
-});
-
-test('Apply to Box upgrades a box made by AutoBox 1.0 and keeps its settings', () => {
-  const host = createHost();
-  // Build the box with the real 1.0 script.
-  globalThis.AUTOBOX_TEST = {};
-  vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'fixtures', 'AutoBox-1.0.0.jsx'), 'utf8'));
-  const v1 = globalThis.AUTOBOX_TEST.api;
-  const comp = host.newComp();
-  const ctrl = comp.layers.addNull({ name: 'Ctrl', position: [100, 100] });
-  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-  sub.parent = ctrl; // 1.0 kept a member's own parent and tracked it by name
-  comp.select(title, sub);
-  v1.createBox(Object.assign({}, v1.DEFAULTS, { layout: 2, padding: 20, fillColor: [1, 0, 0] }));
+  const { comp, title } = scene(host);
+  comp.select(title);
+  assert.equal(host.api.hostRun('create', { padding: 10, fillColor: [1, 0, 0] }), 'ok');
   const box = comp.layer('AutoBox 1');
-  const names = () => box.contentsState.children[0].children[0].children.map((c) => c.name);
-  assert.deepEqual(names(), ['Box Rect', 'Stroke 1', 'Fill 1']);
-  bounds(sub.compBounds(), 200, 326, 500, 362, '1.0 stacked it');
-  host.alerts.length = 0;
+  near(box.effectValue('Padding'), 10);
+  assert.equal(host.api.hostRun('nope', {}), 'Unknown action: nope');
+  host.app.project.activeItem = { not: 'a comp' };
+  assert.equal(host.api.hostRun('apply', {}), 'ok');
+  assert.match(host.alerts.pop(), /Open a composition/);
+});
 
-  comp.select(box);
-  host.api.applySettings(settings(host, { padding: 99, fillType: 2, layout: 3 }));
-  assert.equal(host.alerts.length, 1);
-  assert.match(host.alerts[0], /Upgraded to AutoBox 2\.0\.1[\s\S]*AutoBox 1 \(now parented to it: Subtitle\)/);
-  assert.deepEqual(names(), ['Box Rect', 'Stroke', 'Fill', 'Linear Gradient Fill', 'Radial Gradient Fill'], '1.0 fill and stroke replaced');
-  near(box.effectValue('Padding'), 20, 'its own settings are kept');
-  near(box.effectValue('Layout'), 2);
-  near(box.effectValue('Fill Type'), 1);
-  near(box.effectValue('Fill Color 2'), [1, 0, 0, 1], 'new colors seeded from its own');
-  assert.equal(sub.parent, box);
-  assert.deepEqual(rigExpressions(comp).filter((n) => /Subtitle|Title/.test(n)).length, 2);
-  bounds(sub.compBounds(), 200, 326, 500, 362, 'still in its slot');
-  near(item(box, 'AutoBox', 'Fill')('ADBE Vector Fill Color').value, [1, 0, 0, 1]);
-  comp._layers.forEach((l) => {
-    const walk = (st) => {
-      assert.ok(!/AB_M\.push/.test(st.expression || ''), `${l.name} > ${st.name} still runs the 1.0 engine`);
-      st.children.forEach(walk);
-    };
-    walk(l.root);
+// ---------------------------------------------------------------------------
+// Boxes made by older versions
+// ---------------------------------------------------------------------------
+function oldScene(file, opts) {
+  const host = createHost();
+  const old = oldApi(file);
+  const comp = host.newComp();
+  const ctrl = opts && opts.controller ? comp.layers.addNull({ name: 'Ctrl', position: [100, 100] }) : null;
+  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
+  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
+  if (ctrl) sub.parent = ctrl;
+  comp.select(title, sub);
+  old.createBox(Object.assign({}, old.DEFAULTS, opts && opts.settings));
+  const box = comp.layer('AutoBox 1');
+  host.alerts.length = 0;
+  return { host, comp, box, title, sub, ctrl };
+}
+
+test('an AutoBox 2 box keeps working, and Apply converts it once, keeping its look and its layers in place', () => {
+  const { host, comp, box, title, sub } = oldScene('AutoBox-2.0.1.jsx', {
+    settings: { layout: 2, padding: 20, fillType: 2, fillColor: [1, 0, 0], strokeWidth: 3, strokeColor: [0, 1, 0], radius: 12 },
   });
-
-  host.alerts.length = 0;
-  host.api.applySettings(settings(host, { padding: 99, fillType: 2, layout: 3 }));
-  assert.deepEqual(host.alerts, []);
-  near(box.effectValue('Padding'), 99, 'the second Apply pushes the panel settings');
-  near(item(box, 'AutoBox', 'Linear Gradient Fill')('ADBE Vector Fill Opacity').value, 100);
-});
-
-test('Create Box keeps a shared parent (a controller null) and asks before cutting other links', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const ctrl = comp.layers.addNull({ name: 'Ctrl', position: [50, 50] });
-  title.parent = ctrl;
-  sub.parent = ctrl;
-  const box = create(host, comp, [title, sub]);
-  assert.equal(host.confirms.length, 0);
-  assert.equal(box.parent, ctrl, 'the box takes over the shared parent');
-  assert.equal(title.parent, box);
-  bounds(box.boxCompBounds(), 168, 218, 632, 418);
-  ctrl.tprop('ADBE Position').setValue([150, 50, 0]);
-  bounds(box.boxCompBounds(), 268, 218, 732, 418, 'the controller still moves everything');
-  bounds(title.compBounds(), 300, 250, 700, 310);
-
-  const other = comp.layers.addText('Other', { position: [700, 700], rect: { left: 0, top: -20, width: 100, height: 24 } });
-  const ctrl2 = comp.layers.addNull({ name: 'Ctrl 2' });
-  other.parent = ctrl2;
-  const lone = comp.layers.addText('Lone', { position: [700, 800], rect: { left: 0, top: -20, width: 100, height: 24 } });
-  host.confirmAnswer = false;
-  comp.select(other, lone);
-  host.api.createBox(settings(host));
-  assert.equal(host.confirms.length, 1);
-  assert.match(host.confirms[0], /Other \(parented to Ctrl 2\)/);
-  assert.equal(other.parent, ctrl2, 'cancel leaves everything alone');
-  assert.equal(comp._layers.filter((l) => /^AutoBox \d+$/.test(l.name)).length, 1);
-});
-
-test('boxing layers that sit in a stacked box nests the new box in it, without jumps', () => {
-  const host = createHost();
-  const comp = host.newComp();
-  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
-  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-  const card = create(host, comp, [title, sub, cap], { layout: 2 });
-  const before = { sub: sub.compBounds(), cap: cap.compBounds() };
-  // A Free box first: nothing should move.
-  comp.select(sub, cap);
-  host.api.createBox(settings(host, { padding: 10 }));
-  assert.deepEqual(host.alerts, []);
-  assert.equal(host.confirms.length, 0, 'sharing the card as parent needs no confirmation');
-  const row = comp.layer('AutoBox 2');
-  assert.equal(row.parent, card, 'the new box is nested in the card');
-  assert.ok(row.index < card.index && row.index > sub.index, 'between its members and the card');
-  assert.match(row.tprop('ADBE Position').expression, /^\/\/ AutoBox member/, 'it takes a slot in the card');
-  // The card's stack now holds Title and the row box; the row keeps its layers' layout.
-  const rb = row.boxCompBounds(), tb = title.compBounds(), cb = card.boxCompBounds();
-  near(rb.t, tb.b + 16, 'row sits one gap below the title');
-  near(sub.compBounds().t - rb.t, before.sub.t - (before.sub.t - 10), 'row padding above the subtitle');
-  near(cb.b, rb.b + 32, 'card wraps the row');
-});
-
-test('hidden stack members: collapse when nothing of them shows, keep their slot when their children do', () => {
-  const host = createHost();
-  const comp = host.newComp();
-  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
-  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-  const dot = comp.layers.addShapeMember('Dot', { position: [180, 360], rect: { left: -5, top: -5, width: 10, height: 10 } });
-  dot.parent = sub;
-  const box = create(host, comp, [title, sub, cap, dot], { layout: 2 });
-  const d0 = dot.compBounds(), c0 = cap.compBounds(), b0 = box.boxCompBounds();
-
-  sub.enabled = false; // its Dot is still visible
-  near(box.boxCompBounds().b, b0.b, 'the box keeps the slot');
-  near(cap.compBounds().t, c0.t, 'the next item does not move up under the visible child');
-  near(dot.compBounds().t, d0.t, 'the visible child stays put');
-
-  dot.enabled = false; // now nothing of Subtitle shows
-  near(box.boxCompBounds().b, b0.b - 36 - 16, 'the slot collapses');
-  near(cap.compBounds().t, c0.t - 36 - 16);
-
-  title.enabled = false;
-  cap.enabled = false;
-  const s0 = sub.tprop('ADBE Position').value.slice(0, 2);
-  assert.ok(s0.every(Number.isFinite), 'all members hidden: still a stable position');
-});
-
-test('Apply to Box leaves animated controls alone', () => {
-  const host = createHost();
-  const { comp, title } = scene(host);
-  const box = create(host, comp, [title]);
-  const pad = new Prop(box.effectsState.children.find((e) => e.name === 'Padding').children[0]);
-  pad.setValueAtTime(0, 10);
-  pad.setValueAtTime(1, 50);
-  comp.time = 2;
+  assert.deepEqual(comp._layers.map((l) => l.name), ['Title', 'Subtitle', 'AutoBox 1 Stroke', 'AutoBox 1']);
+  const before = { title: title.compBounds(), sub: sub.compBounds(), box: box.boxCompBounds() };
   comp.select(box);
-  host.api.applySettings(settings(host, { padding: 99, radius: 3 }));
-  assert.equal(pad.numKeys, 2, 'no stray keyframe');
-  near(pad.valueAtTime(0, true), 10);
-  near(box.effectValue('Corner Radius'), 3, 'other controls still update');
-});
-
-test('deleting a box leaves no stray stroke layer behind for long', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title]);
-  const orphan = comp.layer('AutoBox 1 Stroke');
-  box.remove();
-  assert.equal(orphan.parent, null);
-  create(host, comp, [sub]);
-  assert.ok(!comp._layers.includes(orphan), 'orphaned stroke layer cleaned up');
-  assert.equal(comp._layers.filter((l) => /Stroke$/.test(l.name)).length, 1, 'only the new box has one');
-});
-
-test('selecting a box with its stroke layer to nest it raises no alert', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const inner = create(host, comp, [title]);
-  comp.select(inner, comp.layer('AutoBox 1 Stroke'), sub);
-  host.api.createBox(settings(host, { layout: 2 }));
-  assert.deepEqual(host.alerts, []);
-  assert.equal(inner.parent, comp.layer('AutoBox 2'));
-  assert.equal(comp.layer('AutoBox 1 Stroke').parent, inner);
-});
-
-test('a released nested box still counts its stroke in the outer stack', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const inner = create(host, comp, [title], { padding: 10, strokeWidth: 20 });
-  const outer = create(host, comp, [inner, sub], { layout: 2, padding: 20, gap: 8 });
-  const before = sub.compBounds();
-  comp.select(inner);
-  host.api.releaseBoxes();
-  bounds(sub.compBounds(), before.l, before.t, before.r, before.b, 'nothing shifts');
-  assert.ok(outer);
-});
-
-test('every expression AutoBox writes is plain ES3 (Legacy ExtendScript engine)', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  sub.tprop('ADBE Position').dimensionsSeparated = true;
-  create(host, comp, [title, sub], { layout: 2, fillType: 2, strokeType: 3, strokeWidth: 4 });
-  let count = 0;
-  const walk = (l, st) => {
-    if (st.expression) {
-      count++;
-      assert.doesNotThrow(() => acorn.parse(st.expression, { ecmaVersion: 3 }), `${l.name} > ${st.name}`);
-    }
-    st.children.forEach((c) => walk(l, c));
-  };
-  comp._layers.forEach((l) => walk(l, l.root));
-  assert.ok(count > 30, `checked ${count} expressions`);
-});
-
-test('a layer with its own position expression is reported, not silently left behind', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  sub.tprop('ADBE Position').expression = 'value;';
-  comp.select(title, sub);
-  host.api.createBox(settings(host, { layout: 2 }));
+  host.api.applySettings(settings(host, { padding: 99 }));
+  assert.equal(host.confirms.length, 1);
+  assert.match(host.confirms[0], /AutoBox 1 was made with an older AutoBox\. Convert to AutoBox 3/);
   assert.equal(host.alerts.length, 1);
-  assert.match(host.alerts[0], /already have an expression on Position[\s\S]*Subtitle/);
-  assert.equal(sub.tprop('ADBE Position').expression, 'value;', 'their expression is kept');
-});
-
-test('Create Box inside a box made by AutoBox 1.0 asks for an upgrade first', () => {
-  const host = createHost();
-  globalThis.AUTOBOX_TEST = {};
-  vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'fixtures', 'AutoBox-1.0.0.jsx'), 'utf8'));
-  const v1 = globalThis.AUTOBOX_TEST.api;
-  const { comp, title, sub } = scene(host);
-  comp.select(title, sub);
-  v1.createBox(Object.assign({}, v1.DEFAULTS, { layout: 2 }));
-  const card = comp.layer('AutoBox 1');
-  const before = rigParts(card).size;
+  assert.match(host.alerts[0], /Converted to AutoBox 3[\s\S]*its stack is now plain layers[\s\S]*gradient colors are back to white and black/);
+  assert.deepEqual(comp._layers.map((l) => l.name), ['Title', 'Subtitle', 'AutoBox 1'], 'stroke layer gone');
+  assert.deepEqual(box.effectsState.children.map((e) => e.name).sort(), host.api.CONTROLS.map((c) => c.name).sort(),
+    'old controls and the Tint replaced by the 3.0 controls');
+  near(box.effectValue('Padding'), 20, 'its own settings, not the panel\'s');
+  bounds(title.compBounds(), ...Object.values(before.title));
+  bounds(sub.compBounds(), ...Object.values(before.sub));
+  bounds(box.boxCompBounds(), ...Object.values(before.box));
+  assert.deepEqual(expressions(comp).filter((n) => !n.startsWith('AutoBox 1 >')), [], 'no member expressions left');
+  assert.deepEqual(enabled(box), ['Box Rect', 'Stroke', 'Gradient Stroke (off)', 'Fill (off)', 'Gradient Fill']);
+  near(item(box, 'Fill')('ADBE Vector Fill Color').value, [1, 0, 0, 1]);
+  near(item(box, 'Stroke')('ADBE Vector Stroke Color').value, [0, 1, 0, 1]);
+  near(item(box, 'Stroke')('ADBE Vector Stroke Width').value, 3);
+  near(item(box, 'Box Rect')('ADBE Vector Rect Roundness').value, 12);
+  // Converted: the next Apply applies the panel.
+  host.confirms.length = 0;
   host.alerts.length = 0;
-  comp.select(title, sub);
-  host.api.createBox(settings(host));
-  assert.match(host.alerts[0], /AutoBox 1 was made with AutoBox 1\.0/);
-  assert.ok(!comp._layers.some((l) => l.name === 'AutoBox 2'), 'nothing created');
-  assert.equal(rigParts(card).size, before, 'the 1.0 box is untouched');
+  host.api.applySettings(settings(host, { padding: 40 }));
+  assert.deepEqual(host.confirms, []);
+  assert.deepEqual(host.alerts, []);
+  near(box.effectValue('Padding'), 40);
 });
 
-test('Release and Remove on 1.0 boxes keep controller links; Apply asks before cutting them', () => {
-  const build = () => {
-    const host = createHost();
-    globalThis.AUTOBOX_TEST = {};
-    vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'fixtures', 'AutoBox-1.0.0.jsx'), 'utf8'));
-    const v1 = globalThis.AUTOBOX_TEST.api;
-    const comp = host.newComp();
-    const ctrl = comp.layers.addNull({ name: 'Ctrl', position: [100, 100] });
-    const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-    const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-    sub.parent = ctrl;
-    comp.select(title, sub);
-    v1.createBox(Object.assign({}, v1.DEFAULTS, { layout: 2 }));
-    host.alerts.length = 0;
-    return { host, comp, ctrl, sub, title, box: comp.layer('AutoBox 1') };
-  };
-
-  let t = build();
-  const at = t.sub.compBounds();
-  t.comp.select(t.box);
-  t.host.api.releaseBoxes();
-  assert.equal(t.sub.parent, t.ctrl, 'Release keeps the controller link');
-  assert.equal(t.sub.tprop('ADBE Position').expression, '');
-  bounds(t.sub.compBounds(), at.l, at.t, at.r, at.b, 'baked where it was');
-  assert.ok(!t.comp._layers.some((l) => l.name === 'AutoBox 1 Stroke'), 'no new stroke layer for a released box');
-
-  t = build();
-  t.comp.select(t.sub);
-  t.host.api.removeFromBox();
-  assert.equal(t.sub.parent, t.ctrl, 'Remove keeps the controller link');
-  assert.equal(t.sub.tprop('ADBE Position').expression, '');
-
-  t = build();
-  t.host.confirmAnswer = false;
-  t.comp.select(t.box);
-  t.host.api.applySettings(settings(t.host));
-  assert.match(t.host.confirms[0], /Subtitle \(parented to Ctrl\)/);
-  assert.equal(t.sub.parent, t.ctrl, 'declining keeps the link');
-  assert.match(t.host.alerts[0], /left outside it: Subtitle/);
-});
-
-test('a hidden nested box drops out of a Free outer box, stroke and all', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const inner = create(host, comp, [sub], { padding: 10, strokeWidth: 8 });
-  const outer = create(host, comp, [title, inner], { padding: 20 });
-  const full = outer.boxCompBounds();
-  inner.enabled = false; // its Subtitle stays visible
-  const ob = outer.boxCompBounds(), tb = title.compBounds(), sb = sub.compBounds();
-  bounds(ob, Math.min(tb.l, sb.l) - 20, tb.t - 20, Math.max(tb.r, sb.r) + 20, sb.b + 20,
-    'wraps what still shows, without the hidden box\'s padding or stroke');
-  assert.ok(ob.b < full.b);
-});
-
-test('a box nested in a rotated, scaled box is built square to it', () => {
-  const host = createHost();
-  const comp = host.newComp();
-  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
-  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-  const card = create(host, comp, [title, sub, cap], { layout: 2 });
-  card.tprop('ADBE Rotate Z').setValue(30);
-  card.tprop('ADBE Scale').setValue([50, 50, 100]);
-  comp.select(sub, cap);
-  host.api.createBox(settings(host, { padding: 10 }));
-  const row = comp.layer('AutoBox 2');
-  assert.equal(row.parent, card);
-  near(row.tprop('ADBE Rotate Z').value, 0, 'no counter-rotation');
-  near(row.tprop('ADBE Scale').value.slice(0, 2), [100, 100], 'no counter-scale');
-  near(sub.tprop('ADBE Rotate Z').value, 0);
-});
-
-test('Add to Box with the whole box selected keeps existing members\' keyframes', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  const box = create(host, comp, [title]);
-  const pos = title.tprop('ADBE Position');
-  const v = pos.value;
-  pos.setValueAtTime(0, v);
-  pos.setValueAtTime(1, [v[0] + 50, v[1], 0]);
-  comp.select(box, comp.layer('AutoBox 1 Stroke'), title, sub);
-  host.api.addToBox();
-  assert.equal(pos.numKeys, 2, 'keyframes untouched');
-  assert.equal(sub.parent, box);
-});
-
-test('the expression warning only appears for boxes that stack', () => {
-  const host = createHost();
-  const { comp, title, sub } = scene(host);
-  sub.tprop('ADBE Position').expression = 'value;';
-  comp.select(title, sub);
-  host.api.createBox(settings(host, { layout: 1 }));
-  assert.deepEqual(host.alerts, [], 'Free layout never moves layers');
-});
-
-test('paint the user adds to the box is kept', () => {
-  const host = createHost();
-  const { comp, title } = scene(host);
-  const box = create(host, comp, [title]);
-  const contents = new Prop(box.contentsState.children[0].children[0]);
-  contents.addProperty('ADBE Vector Graphic - Stroke').name = 'Inner Glow Stroke';
+test('declining the conversion leaves an old box untouched', () => {
+  const { host, comp, box } = oldScene('AutoBox-2.0.1.jsx', { settings: { layout: 2 } });
+  const names = box.effectsState.children.map((e) => e.name);
+  host.confirmAnswer = false;
   comp.select(box);
   host.api.applySettings(settings(host));
-  assert.ok(box.contentsState.children[0].children[0].children.some((c) => c.name === 'Inner Glow Stroke'));
+  assert.deepEqual(box.effectsState.children.map((e) => e.name), names);
+  assert.deepEqual(host.alerts, []);
 });
 
-test('nesting ignores an outer stroke layer the user moved', () => {
-  const host = createHost();
-  const comp = host.newComp();
-  const cap = comp.layers.addText('Caption', { position: [200, 460], rect: { left: 0, top: -20, width: 200, height: 24 } });
-  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 300, height: 36 } });
-  const title = comp.layers.addText('Title', { position: [200, 300], rect: { left: 0, top: -50, width: 400, height: 60 } });
-  create(host, comp, [title, sub, cap], { layout: 2 });
-  comp.layer('AutoBox 1 Stroke').moveToBeginning();
-  comp.select(sub, cap);
+test('a box made by AutoBox 1.0 converts, adopting the layers it tracked by name if you say so', () => {
+  const { host, comp, box, title, sub, ctrl } = oldScene('AutoBox-1.0.0.jsx', {
+    controller: true, settings: { layout: 2, padding: 20, fillColor: [1, 0, 0] },
+  });
+  const before = sub.compBounds();
+  comp.select(box);
+  host.api.applySettings(settings(host));
+  assert.equal(host.confirms.length, 2);
+  assert.match(host.confirms[1], /AutoBox 1\.0, which left these layers parented to other layers:\s+Subtitle \(parented to Ctrl\)/);
+  assert.match(host.alerts[0], /AutoBox 1 \(its stack is now plain layers[^)]*now parented to it: Subtitle\)/);
+  assert.equal(sub.parent, box);
+  assert.equal(title.parent, box);
+  bounds(sub.compBounds(), ...Object.values(before));
+  near(item(box, 'Fill')('ADBE Vector Fill Color').value, [1, 0, 0, 1]);
+  assert.deepEqual(expressions(comp).filter((n) => !n.startsWith('AutoBox 1 >')), []);
+  assert.ok(ctrl);
+});
+
+test('Create Box inside an old box asks you to convert it first', () => {
+  const { host, comp, title } = oldScene('AutoBox-2.0.1.jsx', { settings: { layout: 2 } });
+  comp.select(title);
   host.api.createBox(settings(host));
-  const row = comp.layer('AutoBox 2');
-  assert.ok(row.index > sub.index && row.index > cap.index, 'still behind its own layers');
+  assert.match(host.alerts.pop(), /made with an older AutoBox\. Select it and click Apply to Box to convert it/);
+  assert.equal(comp._layers.filter((l) => /^AutoBox/.test(l.name)).length, 2);
 });
 
-test('shape items are never moved: a box whose stroke ended up below its fills is rebuilt in order', () => {
+test('Release still bakes an old box in place', () => {
+  const { host, comp, box, title, sub } = oldScene('AutoBox-2.0.1.jsx', { settings: { layout: 2, padding: 20 } });
+  const before = { title: title.compBounds(), sub: sub.compBounds(), box: box.boxCompBounds() };
+  comp.select(box);
+  host.confirmAnswer = true;
+  host.api.releaseBoxes();
+  bounds(title.compBounds(), ...Object.values(before.title));
+  bounds(sub.compBounds(), ...Object.values(before.sub));
+  bounds(box.boxCompBounds(), ...Object.values(before.box));
+  assert.ok(!box.effectsState.children.some((e) => e.name === 'Layout'));
+  assert.ok(box.effectsState.children.some((e) => e.name === 'Fill Color'), '2.x paint controls stay (its stroke layer uses them)');
+});
+
+// ---------------------------------------------------------------------------
+// Smart Animate
+// ---------------------------------------------------------------------------
+// One title box, padding 20 (box 440 x 100 around the title), Box Anchor Center.
+function titleBox(overrides) {
   const host = createHost();
-  const { comp, title } = scene(host);
-  const look = { fillColor: [1, 0.5, 0], strokeWidth: 4, strokeColor: [0, 1, 0] };
-  const box = create(host, comp, [title], look);
-  const vec = box.contentsState.children[0].children[0];
-  const names = () => vec.children.map((c) => c.name);
-  const ORDER = ['Box Rect', 'Stroke', 'Fill', 'Linear Gradient Fill', 'Radial Gradient Fill'];
-  assert.deepEqual(names(), ORDER);
+  const { comp, title, sub } = scene(host);
+  sub.remove();
+  const box = create(host, comp, [title], Object.assign({ padding: 20, anchor: 5 }, overrides));
+  return { host, comp, title, box };
+}
 
-  const apply = () => {
-    comp.select(box);
-    host.api.applySettings(settings(host, look));
-    assert.deepEqual(host.alerts, [], 'no alerts');
-    assert.deepEqual(names(), ORDER);
-    near(item(box, 'AutoBox', 'Fill')('ADBE Vector Fill Color').value, [1, 0.5, 0, 1]);
-    near(item(box, 'AutoBox', 'Fill')('ADBE Vector Fill Opacity').value, 100);
-    near(item(box, 'AutoBox', 'Linear Gradient Fill')('ADBE Vector Grad Type').value, 1);
-    near(item(box, 'AutoBox', 'Radial Gradient Fill')('ADBE Vector Grad Type').value, 2);
-    near(item(box, 'AutoBox', 'Stroke')('ADBE Vector Stroke Color').value, [0, 1, 0, 1]);
-    near(item(box, 'AutoBox', 'Stroke')('ADBE Vector Stroke Opacity').value, 100);
+test('layers with no keyframes are there from the first frame', () => {
+  const { box } = titleBox();
+  for (const t of [0, 2, 9]) near([rect(box, t).w, rect(box, t).h], [440, 100], `at ${t}`);
+});
+
+test('a layer sliding in: the box grows from Box Anchor on the layer\'s own curve, then holds while it slides out', () => {
+  const { box } = titleBox();
+  slide(box.comp.layer('Title'), [[1, 0, 200, smooth], [1.5, 0, 0], [3, 0, 0, smooth], [3.5, 0, -200]]);
+  const full = rect(box, 2);
+  near([full.w, full.h], [440, 100]);
+  const cx = (full.l + full.r) / 2, cy = (full.t + full.b) / 2;
+  near([rect(box, 0.5).w, rect(box, 0.5).h], [0, 0], 'nothing before it comes in');
+  for (const t of [1.1, 1.25, 1.4]) {
+    const p = smooth((t - 1) / 0.5), r = rect(box, t);
+    near([r.w, r.h], [440 * p, 100 * p], `grows with the layer's easing at ${t}`);
+    near([(r.l + r.r) / 2, (r.t + r.b) / 2], [cx, cy], 'from the center (Box Anchor)');
+  }
+  for (const t of [3.2, 3.5, 6]) near([rect(box, t).w, rect(box, t).h], [440, 100], `holds while it leaves (${t})`);
+});
+
+test('Box Anchor sets where the box grows from', () => {
+  const { box } = titleBox({ anchor: 4 });
+  slide(box.comp.layer('Title'), [[0, 0, 100], [1, 0, 0]]);
+  const full = rect(box, 2), half = rect(box, 0.5);
+  near([half.l, half.t, half.r, half.b], [full.l, full.t + 25, full.l + 220, full.b - 25], 'Left: from the middle of the left edge');
+});
+
+test('text swap: the incoming layer replaces the outgoing one on its own curve', () => {
+  for (const lag of [0, 0.1, -0.1]) {
+    const host = createHost();
+    const comp = host.newComp({ duration: 10 });
+    const b = comp.layers.addText('Second, much longer line', { position: [200, 300], rect: { left: 0, top: -50, width: 700, height: 60 } });
+    const a = comp.layers.addText('First', { position: [200, 300], rect: { left: 0, top: -50, width: 300, height: 60 } });
+    const box = create(host, comp, [a, b], { padding: 20, anchor: 5 });
+    slide(a, [[0, 0, 100, smooth], [0.5, 0, 0], [2, 0, 0, smooth], [2.5, 0, -100]]);
+    slide(b, [[2 + lag, 0, 100, smooth], [2.5 + lag, 0, 0]]);
+    near(rect(box, 1).w, 340, `${lag}: A only`);
+    near(rect(box, 2 + lag).w, 340, `${lag}: still A as B starts`);
+    const p = smooth(0.5);
+    near(rect(box, 2.25 + lag).w, 340 + (740 - 340) * p, `${lag}: halfway on B's curve`);
+    near(rect(box, 3).w, 740, `${lag}: B only, A is gone`);
+  }
+});
+
+test('a staggered list builds the box line by line, and the box holds when they all leave', () => {
+  const build = (gap) => {
+    const host = createHost();
+    const comp = host.newComp({ duration: 10 });
+    const lines = [];
+    for (let i = 3; i >= 0; i--) {
+      lines.unshift(comp.layers.addText(`Line ${i}`, { position: [200, 300 + i * 50], rect: { left: 0, top: -40, width: 300 + i * 50, height: 40 } }));
+    }
+    const box = create(host, comp, lines, { padding: 10, anchor: 1 });
+    lines.forEach((l, i) => slide(l, [[i * gap, -400, 0, smooth], [i * gap + 0.4, 0, 0], [5, 0, 0], [5.4, 400, 0]]));
+    return box;
   };
-  // The stroke dragged below the fills in the timeline.
-  vec.children.push(vec.children.splice(1, 1)[0]);
-  vec.gen++;
-  apply();
-  // The stroke deleted: appending it would put it below the fills.
-  vec.children.splice(1, 1)[0].removed = true;
-  vec.gen++;
-  apply();
+  // One after the other: the box fits each line as it lands (Top Left anchor:
+  // it grows down and right).
+  let box = build(0.5);
+  for (let i = 0; i < 4; i++) {
+    const t = i * 0.5 + 0.4;
+    near([rect(box, t).w, rect(box, t).h], [320 + i * 50, 60 + i * 50], `line ${i} in`);
+  }
+  near([rect(box, 6).w, rect(box, 6).h], [470, 210], 'holds after they all leave');
+  // Overlapping: each new line takes over from wherever the box is, smoothly.
+  box = build(0.15);
+  let prev = rect(box, 0);
+  for (let f = 1; f <= 30; f++) {
+    const r = rect(box, f / 30);
+    assert.ok(Math.abs(r.h - prev.h) < 25 && r.h >= prev.h - 1e-6, `no jumps, never shrinks (frame ${f})`);
+    prev = r;
+  }
+  near([rect(box, 1).w, rect(box, 1).h], [470, 210], 'all four in');
+});
 
-  // The mock fails like After Effects does after a shape item is moved.
-  new Prop(vec.children[1]).moveTo(5);
-  assert.throws(() => new Prop(box.effectsState).addProperty('ADBE Tint'),
-    /internal verification failure, sorry! \{stream at index matchName="ADBE Vector Graphic - Fill" \(mismatch with resultP, expected "ADBE Vector Graphic - G-Fill"\)\}/);
+test('a layer that appears without keyframes comes in over Morph Time with Morph Ease', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  sub.inPoint = 2;
+  const box = create(host, comp, [title, sub], { padding: 0, anchor: 1, morphTime: 0.5, morphEase: 1 });
+  near(rect(box, 1).h, 60, 'title only');
+  near(rect(box, 2.25).h, 60 + 76 * 0.5, 'linear, halfway');
+  near(rect(box, 3).h, 136);
+  box.setEffect('Morph Ease', 4);
+  near(rect(box, 2.125).h, 60 + 76 * (4 * 0.25 * 0.25 * 0.25), 'ease in out');
+  box.setEffect('Morph Time', 0);
+  near(rect(box, 2).h, 136, 'Morph Time 0 snaps');
+});
+
+test('a layer\'s out point takes it out (the box holds); the next layer in replaces it', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 10 });
+  const b = comp.layers.addText('B', { position: [200, 300], rect: { left: 0, top: -50, width: 700, height: 60 }, inPoint: 4 });
+  const a = comp.layers.addText('A', { position: [200, 300], rect: { left: 0, top: -50, width: 300, height: 60 }, outPoint: 3 });
+  const box = create(host, comp, [a, b], { padding: 0, anchor: 1, morphTime: 0.5, morphEase: 1 });
+  near(rect(box, 1).w, 300);
+  near(rect(box, 3.5).w, 300, 'A is gone, the box holds');
+  near(rect(box, 4.25).w, 500, 'morphs to B');
+  near(rect(box, 5).w, 700);
+});
+
+test('moves between two rests reposition the layer: the box follows on that move\'s curve', () => {
+  const { box } = titleBox({ anchor: 1 });
+  // in 0..0.5, moves right 200px at 2..3 (eased), out 6..6.5
+  slide(box.comp.layer('Title'), [[0, 0, 100], [0.5, 0, 0], [2, 0, 0, smooth], [3, 200, 0], [6, 200, 0], [6.5, 200, -200]]);
+  const a = rect(box, 1), b = rect(box, 4);
+  near(b.l - a.l, 200, 'ends up around the new spot');
+  near(rect(box, 2.5).l - a.l, 200 * smooth(0.5), 'on the move\'s curve');
+  near(rect(box, 7).l, b.l, 'holds after the exit');
+});
+
+test('overshoot in the layer\'s curve carries over to the box (scale pop)', () => {
+  const { box, title } = titleBox();
+  title.tprop('ADBE Anchor Point').s.value = [200, -20, 0];
+  keys(title.tprop('ADBE Scale'), [[0, [0, 0, 100]], [0.3, [110, 110, 100]], [0.5, [100, 100, 100]]]);
+  near(rect(box, 0.3).w, 440 * 1.1, 'overshoots with the layer');
+  near(rect(box, 1).w, 440);
+});
+
+test('an opacity fade-in or a hold-key jump also counts as coming in', () => {
+  const { box, title } = titleBox({ anchor: 1, morphTime: 0.5, morphEase: 1 });
+  keys(title.tprop('ADBE Opacity'), [[1, 0, smooth], [2, 100]]);
+  near(rect(box, 0.5).w, 0);
+  near(rect(box, 1.5).w, 440 * smooth(0.5), 'fades in, box grows on the fade curve');
+  keys(title.tprop('ADBE Opacity'), [[1, 0, 'hold'], [2, 100]]);
+  near(rect(box, 1.5).w, 0, 'hold: nothing until the jump');
+  near(rect(box, 2.25).w, 220, 'then Morph Time');
+});
+
+test('keyframed Source Text: the box morphs to the new text', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 10 });
+  const title = comp.layers.addText('Title', {
+    position: [200, 300], textKeys: [0, 2],
+    rect: (t) => (t < 2 ? { left: 0, top: -50, width: 400, height: 60 } : { left: 0, top: -50, width: 600, height: 60 }),
+  });
+  const box = create(host, comp, [title], { padding: 0, anchor: 1, morphTime: 0.5, morphEase: 1 });
+  near(rect(box, 1).w, 400);
+  near(rect(box, 2.25).w, 500);
+  near(rect(box, 3).w, 600);
+  // Slid 1s along the timeline: still measured at the right time.
+  title.startTime = 1;
+  title.rect = (t) => (t < 3 ? { left: 0, top: -50, width: 400, height: 60 } : { left: 0, top: -50, width: 600, height: 60 });
+  title.textKeys = [1, 3];
+  near(rect(box, 2).w, 400);
+  near(rect(box, 4).w, 600);
+});
+
+test('a text animator reveal drives the box', () => {
+  const { box, title } = titleBox({ anchor: 1 });
+  const sel = title.addAnimator();
+  keys(sel.end, [[1, 0, smooth], [2, 100]]);
+  near(rect(box, 0.5).w, 0);
+  near(rect(box, 1.5).w, 440 * smooth(0.5));
+  near(rect(box, 3).w, 440);
+});
+
+test('separated position dimensions and riders (layers parented to a member)', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub], { padding: 0, anchor: 1 });
+  const pos = sub.tprop('ADBE Position');
+  pos.dimensionsSeparated = true;
+  const y = sub.tprop('ADBE Position_1').value;
+  keys(sub.tprop('ADBE Position_1'), [[1, y + 300, smooth], [2, y]]);
+  near(rect(box, 0.5).h, 60, 'subtitle not in yet');
+  near(rect(box, 1.5).h, 60 + 76 * smooth(0.5));
+  near(rect(box, 3).h, 136);
+  // A rider moves with its parent's keyframes.
+  const icon = comp.layers.addShapeMember('Icon', { position: [0, 0], rect: { left: 0, top: 0, width: 20, height: 20 } });
+  icon.parent = sub;
+  icon.tprop('ADBE Position').s.value = [-60, -30, 0];
+  near(rect(box, 3).l, -40, 'icon sticks out left of the subtitle');
+  near(rect(box, 0.5).l, 0, 'not before its parent comes in');
+});
+
+test('Ignore Hidden: a layer with its video switched off does not count', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub], { padding: 0 });
+  sub.enabled = false;
+  near(rect(box, 1).h, 60);
+  box.setEffect('Ignore Hidden', 0);
+  near(rect(box, 1).h, 136);
+});
+
+test('Smart Animate off: the box follows its layers every frame', () => {
+  const { box, title } = titleBox({ anchor: 1, smartAnimate: 0 });
+  slide(title, [[1, 0, 200], [2, 0, 0], [3, 0, 0], [4, 300, 0]]);
+  const at = (t) => rect(box, t);
+  near(at(0.5).t - at(2).t, 200, 'wraps the layer where it is');
+  near(at(3.5).l - at(2).l, 150);
+});
+
+test('In Box checkbox: off never counts, keyed on brings the layer in, keyed off lets the box hold', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub], { padding: 0, anchor: 1, morphTime: 0.5, morphEase: 1 });
+  const add = (layer) => {
+    new Prop(layer.effectsState).addProperty('ADBE Checkbox Control').name = 'In Box';
+    return layer.effectsState.children.find((e) => e.name === 'In Box').children[0];
+  };
+  const cb = add(sub);
+  near(rect(box, 1).h, 60, 'unchecked: the subtitle never changes the box');
+  // The subtitle slides in at 2..3 but only counts once In Box turns on at 2.5:
+  // the box borrows the rest of the slide's curve.
+  slide(sub, [[2, 0, 200], [3, 0, 0]]);
+  keys(cb, [[0, 0], [2.5, 1], [6, 0]]);
+  near(rect(box, 2.4).h, 60);
+  near(rect(box, 2.75).h, 60 + 76 * 0.5, 'renormalized: halfway through what is left');
+  near(rect(box, 4).h, 136);
+  near(rect(box, 7).h, 136, 'switched off: the box holds');
+  // No move when it switches on: Morph Time.
+  keys(cb, [[0, 0], [4, 1]]);
+  near(rect(box, 4.25).h, 98);
+  // Checked without keys: always in, counted where it is; its moves only
+  // reposition it.
+  keys(cb, []);
+  cb.value = 1;
+  near(rect(box, 1).h, 336, 'in from the start, 200px down (not waiting for its first move)');
+  near(rect(box, 2.5).h, 236, 'repositions on the slide');
+  near(rect(box, 4).h, 136);
+});
+
+test('the In Box button keys the checkbox to what AutoBox does on its own', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub], { padding: 0, anchor: 5 });
+  slide(title, [[1, 0, 200, smooth], [1.5, 0, 0], [3, 0, 0], [3.5, 0, -200]]);
+  const times = [];
+  for (let f = 0; f <= 150; f += 5) times.push(f / 30);
+  const before = times.map((t) => rect(box, t));
+  comp.select(title, sub);
+  host.api.addInBoxToggles();
+  assert.deepEqual(host.alerts, []);
+  const tcb = title.effectsState.children.find((e) => e.name === 'In Box').children[0];
+  const scb = sub.effectsState.children.find((e) => e.name === 'In Box').children[0];
+  assert.deepEqual(tcb.keys.map((k) => [k.t, k.v]), [[0, 0], [1, 1], [3, 0]]);
+  assert.deepEqual(scb.keys, []);
+  near(scb.value, 1);
+  times.forEach((t, i) => {
+    const r = rect(box, t);
+    near([r.l, r.t, r.r, r.b], [before[i].l, before[i].t, before[i].r, before[i].b], `same box at ${t}`);
+  });
+  // Again: already there.
+  comp.select(title);
+  host.api.addInBoxToggles();
+  assert.match(host.alerts.pop(), /already has an In Box checkbox/);
+});
+
+test('Freeze holds the box, then eases back to where it should be', () => {
+  const { box, title } = titleBox({ anchor: 1, morphTime: 0.5, morphEase: 1 });
+  title.setText({ left: 0, top: -50, width: 400, height: 60 });
+  const freeze = box.effectsState.children.find((e) => e.name === 'Freeze').children[0];
+  // The title grows (Source Text) at 2; frozen 1..3.
+  title.textKeys = [0, 2];
+  title.rect = (t) => (t < 2 ? { left: 0, top: -50, width: 400, height: 60 } : { left: 0, top: -50, width: 600, height: 60 });
+  keys(freeze, [[0, 0], [1, 1], [3, 0]]);
+  near(rect(box, 2.6).w, 440, 'frozen at its 1s shape');
+  near(rect(box, 3.25).w, 440 + 200 * 0.5, 'eases back over Morph Time');
+  near(rect(box, 4).w, 640);
+  // Frozen from the start: holds the shape it has when Freeze turns off.
+  keys(freeze, [[0, 1], [2.5, 0]]);
+  near(rect(box, 0.5).w, rect(box, 2.5).w);
+  near(rect(box, 2.5).w, 640 - 200 * 0, 'continuous when it unfreezes');
+});
+
+test('nested boxes: the outer box follows the inner box\'s own morphs, with no expression cycles', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 10 });
+  const sub = comp.layers.addText('Subtitle', { position: [220, 380], rect: { left: 0, top: -30, width: 100, height: 36 } });
+  const icon = comp.layers.addShapeMember('Icon', { position: [200, 280], rect: { left: 0, top: -40, width: 40, height: 40 } });
+  const title = comp.layers.addText('Title', { position: [260, 280], rect: { left: 0, top: -40, width: 300, height: 40 } });
+  const inner = create(host, comp, [icon, title], { padding: 10, anchor: 1, strokeWidth: 4 });
+  const outer = create(host, comp, [inner, sub], { padding: 20, anchor: 1 });
+  assert.equal(inner.parent, outer);
+  assert.equal(icon.parent, inner);
+  const ib = inner.boxCompBounds(1);
+  near(outer.boxCompBounds(1).t, ib.t - 2 - 20, 'counts the inner box\'s stroke');
+  // The title slides into the inner box: the outer box grows along with it.
+  slide(title, [[1, 0, 100, smooth], [2, 0, 0]]);
+  const w = (t) => outer.boxRect(t).w;
+  assert.ok(w(1.25) < w(1.5) && w(1.5) < w(2), 'grows with the inner box');
+  near(w(2), w(3));
+  for (const l of [inner, outer]) {
+    for (const mn of ['ADBE Vector Rect Size', 'ADBE Vector Rect Position']) assert.equal(item(l, 'Box Rect')(mn).s.expressionError, '');
+  }
+});
+
+test('scaled members and a rotated, scaled box: measured in the box\'s own space', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  sub.remove();
+  title.tprop('ADBE Scale').s.value = [50, 50, 100];
+  const box = create(host, comp, [title], { padding: 10, anchor: 1 });
+  near([rect(box, 0).w, rect(box, 0).h], [220, 50]);
+  box.tprop('ADBE Rotate Z').s.value = 30;
+  box.tprop('ADBE Scale').s.value = [200, 200, 100];
+  near([rect(box, 0).w, rect(box, 0).h], [220, 50], 'the box\'s own transform doesn\'t change its rect');
 });

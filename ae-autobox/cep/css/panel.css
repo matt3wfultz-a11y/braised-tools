@@ -294,28 +294,6 @@ button:hover { background: var(--control-hover); }
 button:focus { outline: none; border-color: var(--hot); }
 button:disabled { opacity: 0.5; cursor: default; }
 
-.seg { display: flex; flex: 0 0 auto; min-width: 0; }
-.seg button {
-  flex: 0 0 28px;
-  width: 28px;
-  min-height: 19px;
-  padding: 0;
-  line-height: 0;
-  border-radius: 0;
-  color: var(--text);
-  background: var(--field);
-  border-color: var(--well-border);
-}
-.seg button + button { border-left-width: 0; }
-.seg button:first-child { border-radius: 4px 0 0 4px; }
-.seg button:last-child { border-radius: 0 4px 4px 0; }
-.seg button:hover { background: var(--control); }
-.seg button.on { background: var(--control); color: var(--hot); }
-.seg svg { width: 14px; height: 14px; fill: currentColor; vertical-align: middle; }
-.seg .for-h { display: none; }
-.is-horizontal .seg .for-h { display: inline; }
-.is-horizontal .seg .for-v { display: none; }
-
 .anchor {
   display: grid;
   grid-template-columns: repeat(3, 12px);
@@ -361,54 +339,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .swatch:hover { border-color: var(--text); background-image: none; }
 
-/* Two-stop gradient bar */
-.gradient {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 80px;
-  max-width: 180px;
-  height: 26px;
-  margin: 2px 0;
-}
-.gradient .ramp {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  top: 0;
-  height: 12px;
-  border: 1px solid var(--well-border);
-  border-radius: 1px;
-}
-.gradient .stop {
-  position: absolute;
-  top: 15px;
-  width: 12px;
-  height: 10px;
-  border-radius: 1px;
-}
-.gradient .stop::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: -5px;
-  border-style: solid;
-  border-width: 0 3px 4px 3px;
-  border-color: transparent transparent var(--thumb) transparent;
-}
-.gradient .stop.a { left: 0; }
-.gradient .stop.b { right: 0; }
-
-.icon {
-  min-height: 18px;
-  padding: 0 5px;
-  line-height: 16px;
-  color: var(--text);
-  background: transparent;
-  border-color: transparent;
-  border-radius: 3px;
-}
-.icon:hover { background: var(--control); border-color: var(--control-border); }
-
 /* Checkbox */
 .check { display: flex; align-items: center; cursor: pointer; min-width: 0; }
 .check input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
@@ -435,7 +365,13 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .check input:focus + .box { border-color: var(--hot); }
 
-.is-free .stack-only { opacity: 0.45; }
+/* Notes that take the whole row (name and value columns) */
+.prop > .note {
+  grid-column: 2 / -1;
+  margin: 0;
+  padding: 3px 0;
+  color: var(--muted);
+}
 
 /* ── Actions ───────────────────────────────────────────────────────── */
 .actions { padding: 12px 8px 0; }
@@ -458,7 +394,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 /* Mouse clicks don't leave focus rings; Tab brings them back. */
 body.pointer button:focus, body.pointer select:focus { border-color: var(--control-border); }
-body.pointer select:focus, body.pointer .seg button:focus, body.pointer .swatch:focus { border-color: var(--well-border); }
+body.pointer select:focus, body.pointer .swatch:focus { border-color: var(--well-border); }
 body.pointer .primary:focus { border-color: var(--accent); }
 body.pointer .fx > .head:focus { box-shadow: none; }
 body.pointer .reset:focus, body.pointer .hot:focus { text-decoration: none; }
