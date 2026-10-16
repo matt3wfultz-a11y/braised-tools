@@ -18,7 +18,7 @@
 
 (function AutoBoxPanel(thisObj) {
     var SCRIPT_NAME = "AutoBox";
-    var VERSION = "2.0.0";
+    var VERSION = "2.0.1";
     var SETTINGS_SECTION = "BraisedAutoBox";
     var RIG_GROUP = "AutoBox";
     var STROKE_GROUP = "AutoBox Stroke";
@@ -823,14 +823,37 @@
         }
     }
 
+    // A shape group's contents, looked up from the layer every time. Adding or
+    // removing a shape item invalidates references to its siblings, so no
+    // reference to an item is kept across a change.
+    function vectors(layer, groupName) {
+        return layer.property("ADBE Root Vectors Group").property(groupName).property("ADBE Vectors Group");
+    }
+
     // Find a shape item by name, adding it if it's missing. gradType sets a
-    // gradient's Linear (1) / Radial (2) type. Returns nothing: adding a
-    // property invalidates references, so callers look items up again.
-    function ensureItem(contents, name, matchName, gradType) {
-        if (contents.property(name)) return;
-        var item = contents.addProperty(matchName);
-        item.name = name;
-        if (gradType) contents.property(name).property("ADBE Vector Grad Type").setValue(gradType);
+    // gradient's Linear (1) / Radial (2) type. Items are only ever appended in
+    // the order they should end up in, never moved: reordering shape items
+    // with moveTo makes After Effects fail an internal check on the next edit
+    // ("internal verification failure, sorry!").
+    function ensureItem(layer, groupName, name, matchName, gradType) {
+        if (vectors(layer, groupName).property(name)) return;
+        vectors(layer, groupName).addProperty(matchName).name = name;
+        if (gradType) vectors(layer, groupName).property(name).property("ADBE Vector Grad Type").setValue(gradType);
+    }
+
+    // Remove the items `test` picks. The scan runs top down and starts over
+    // after each removal, so no reference outlives a change above it.
+    function removeItems(layer, groupName, test) {
+        for (var found = true; found;) {
+            found = false;
+            var contents = vectors(layer, groupName);
+            for (var i = 1; i <= contents.numProperties; i++) {
+                if (!test(contents.property(i))) continue;
+                contents.property(i).remove();
+                found = true;
+                break;
+            }
+        }
     }
 
     function ensureTint(layer, name, ctl, prefix) {
@@ -844,14 +867,17 @@
     }
 
     // Shape items (fill, gradients) and the expressions that drive them.
-    // `ctl` reads Effect Controls; `rect` finds this group's rect path.
-    function paintItems(contents, ctl, prefix, rect) {
+    // `ctl` reads Effect Controls. All items are added before any expression
+    // is set.
+    function paintItems(layer, groupName, ctl, prefix) {
         var kind = prefix == "Fill" ? "Fill" : "Stroke";
         var solid = kind, linear = "Linear Gradient " + kind, radial = "Radial Gradient " + kind;
         var gMatch = "ADBE Vector Graphic - " + (kind == "Fill" ? "G-Fill" : "G-Stroke");
-        ensureItem(contents, solid, "ADBE Vector Graphic - " + kind);
-        ensureItem(contents, linear, gMatch, 1);
-        ensureItem(contents, radial, gMatch, 2);
+        var rect = "thisLayer.content(\"" + groupName + "\").content(\"" + RECT_NAME + "\")";
+        ensureItem(layer, groupName, solid, "ADBE Vector Graphic - " + kind);
+        ensureItem(layer, groupName, linear, gMatch, 1);
+        ensureItem(layer, groupName, radial, gMatch, 2);
+        var contents = vectors(layer, groupName);
         var opacity = kind == "Fill" ? "ADBE Vector Fill Opacity" : "ADBE Vector Stroke Opacity";
         var color = kind == "Fill" ? "ADBE Vector Fill Color" : "ADBE Vector Stroke Color";
         setExpression(contents.property(solid).property(color), colorExpression(ctl, prefix + " Color"));
@@ -902,13 +928,11 @@
         // Shows only while the box does (its switch, in/out and opacity).
         pin(t.property("ADBE Opacity"), "var p = thisLayer.hasParent ? thisLayer.parent : null;\n" +
             "p ? (p.active ? p.transform.opacity.value : 0) : value;");
-        var contents = layer.property("ADBE Root Vectors Group").property(STROKE_GROUP).property("ADBE Vectors Group");
-        var rect = contents.property(RECT_NAME);
+        paintItems(layer, STROKE_GROUP, "thisLayer.parent", "Stroke");
+        var rect = vectors(layer, STROKE_GROUP).property(RECT_NAME);
         setExpression(rect.property("ADBE Vector Rect Size"), strokeRectExpression("size"));
         setExpression(rect.property("ADBE Vector Rect Position"), strokeRectExpression("position"));
         setExpression(rect.property("ADBE Vector Rect Roundness"), strokeRectExpression("roundness"));
-        paintItems(contents, "thisLayer.parent", "Stroke",
-            "thisLayer.content(\"" + STROKE_GROUP + "\").content(\"" + RECT_NAME + "\")");
         ensureTint(layer, STROKE_TINT, "thisLayer.parent", "Stroke");
         try {
             layer.startTime = box.startTime;
@@ -933,6 +957,7 @@
         "ADBE Vector Graphic - Stroke": true,
         "ADBE Vector Graphic - G-Stroke": true
     };
+    var BOX_FILLS = { "Fill": true, "Linear Gradient Fill": true, "Radial Gradient Fill": true };
     var BOX_PAINT = { "Stroke": true, "Fill": true, "Linear Gradient Fill": true, "Radial Gradient Fill": true };
 
     // A paint item AutoBox 1.x made: its color reads the box's own controls
@@ -948,23 +973,37 @@
     // A solid stroke on a solid fill is drawn in the box itself (above the
     // fills), so fading the box fades both as one layer.
     function paintBox(comp, box) {
-        var contents = rigGroup(box).property("ADBE Vectors Group"), i;
         // Boxes from AutoBox 1.x have an unnamed "Fill 1" / "Stroke 1" driven by
         // the old expressions; anything else in the group is the user's.
-        for (i = contents.numProperties; i >= 1; i--) {
-            var it = contents.property(i);
-            if (PAINT_MATCHES[it.matchName] && !BOX_PAINT[it.name] && isLegacyPaint(it)) it.remove();
+        removeItems(box, RIG_GROUP, function (it) {
+            return PAINT_MATCHES[it.matchName] && !BOX_PAINT[it.name] && isLegacyPaint(it);
+        });
+        // The stroke has to sit above the fills. Items can't be moved (see
+        // ensureItem), so fills that ended up above it are rebuilt below it.
+        if (!strokeAboveFills(box)) {
+            removeItems(box, RIG_GROUP, function (it) {
+                return PAINT_MATCHES[it.matchName] && BOX_FILLS[it.name];
+            });
         }
-        paintItems(contents, "thisLayer", "Fill",
-            "thisLayer.content(\"" + RIG_GROUP + "\").content(\"" + RECT_NAME + "\")");
-        ensureItem(contents, "Stroke", "ADBE Vector Graphic - Stroke");
-        if (contents.property("Stroke").propertyIndex != 2) contents.property("Stroke").moveTo(2);
-        var stroke = contents.property("Stroke");
+        ensureItem(box, RIG_GROUP, "Stroke", "ADBE Vector Graphic - Stroke");
+        paintItems(box, RIG_GROUP, "thisLayer", "Fill");
+        var stroke = vectors(box, RIG_GROUP).property("Stroke");
         setExpression(stroke.property("ADBE Vector Stroke Color"), colorExpression("thisLayer", "Stroke Color"));
         setExpression(stroke.property("ADBE Vector Stroke Width"), widthExpression("thisLayer"));
         setExpression(stroke.property("ADBE Vector Stroke Opacity"), opacityExpression("thisLayer", "Stroke", 1, "box"));
         ensureTint(box, FILL_TINT, "thisLayer", "Fill");
         return ensureStrokeLayer(comp, box);
+    }
+
+    // Is the box's stroke (or where it would be appended) above all its fills?
+    function strokeAboveFills(box) {
+        var contents = vectors(box, RIG_GROUP), stroke = contents.property("Stroke");
+        var top = stroke ? stroke.propertyIndex : contents.numProperties + 1;
+        for (var name in BOX_FILLS) {
+            var fill = contents.property(name);
+            if (fill && fill.propertyIndex < top) return false;
+        }
+        return true;
     }
 
     function fitTiming(box, members) {

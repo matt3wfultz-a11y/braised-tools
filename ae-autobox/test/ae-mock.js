@@ -216,6 +216,23 @@ function staticAt(s, t) {
   return clone(k[k.length - 1].v);
 }
 
+function inShapeContents(s) {
+  for (let p = s.parent; p; p = p.parent) if (p.matchName === 'ADBE Root Vectors Group') return true;
+  return false;
+}
+
+// Adding, removing or moving a property checks the layer the way After
+// Effects does after a shape item was moved (see Prop.moveTo).
+function verified(s) {
+  const layer = s.layer;
+  if (layer && layer._brokenStream) {
+    const msg = layer._brokenStream;
+    layer._brokenStream = null;
+    throw new Error(`After Effects error: internal verification failure, sorry! {${msg}}`);
+  }
+  return s;
+}
+
 class Prop {
   constructor(state) {
     this.s = state;
@@ -243,7 +260,7 @@ class Prop {
     return new Prop(s);
   }
   addProperty(matchName) {
-    const s = this._c();
+    const s = verified(this._c());
     const make = FACTORIES[matchName];
     if (!make) throw new Error(`Can't add ${matchName} here`);
     const child = s.add(make(s));
@@ -251,18 +268,28 @@ class Prop {
     return new Prop(child);
   }
   remove() {
-    const s = this._c();
+    const s = verified(this._c());
     s.parent.children.splice(s.parent.children.indexOf(s), 1);
     s.parent.gen++;
     s.removed = true;
   }
   // Like After Effects, moving an item invalidates references to its siblings.
+  // Moving a shape item also leaves After Effects' own references to the
+  // siblings it shifted pointing at the wrong item, and the next edit to the
+  // layer fails an internal check (reported from After Effects as "internal
+  // verification failure, sorry! {stream at index matchName=...}").
   moveTo(index) {
-    const s = this._c(), list = s.parent.children;
+    const s = verified(this._c()), list = s.parent.children;
     if (index < 1 || index > list.length) throw new Error(`moveTo(${index}) out of range`);
+    const before = list.slice();
     list.splice(list.indexOf(s), 1);
     list.splice(index - 1, 0, s);
     s.parent.gen++;
+    const shifted = before.find((c, i) => c !== s && list[i] !== c);
+    if (shifted && inShapeContents(s) && s.layer) {
+      s.layer._brokenStream = `stream at index matchName="${shifted.matchName}" ` +
+        `(mismatch with resultP, expected "${list[before.indexOf(shifted)].matchName}")`;
+    }
   }
   get canSetExpression() { return !this._c().group && !this._c().noValue; }
   get expression() { return this._c().expression; }

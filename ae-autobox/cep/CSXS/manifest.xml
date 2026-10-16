@@ -2,10 +2,10 @@
 <ExtensionManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    ExtensionBundleId="com.braised.autobox"
                    ExtensionBundleName="AutoBox"
-                   ExtensionBundleVersion="2.0.0"
+                   ExtensionBundleVersion="2.0.1"
                    Version="7.0">
   <ExtensionList>
-    <Extension Id="com.braised.autobox.panel" Version="2.0.0" />
+    <Extension Id="com.braised.autobox.panel" Version="2.0.1" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

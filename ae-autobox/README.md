@@ -169,7 +169,8 @@ After Effects can't run in CI, so `test/ae-mock.js` stands in for it. It mocks
 just enough of AE's scripting objects, the expression runtime and ScriptUI to run
 the real `AutoBox.jsx`. It models AE's quirks that matter here: text layers that
 rename themselves as their text changes, property references that go stale,
-gradient colors scripts can't touch, and expression cycles. The tests check box,
+shape items that can't safely be reordered, gradient colors scripts can't touch,
+and expression cycles. The tests check box,
 stack and gradient positions down to the pixel, and parse every expression
 AutoBox writes as plain ES3 for the Legacy ExtendScript engine. The CEP panel is
 tested in jsdom, with its evalScript calls routed into that same mock.

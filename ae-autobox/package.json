@@ -1,6 +1,6 @@
 {
   "name": "ae-autobox",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "AutoBox \u2014 auto-sizing background boxes and auto layout for After Effects (ScriptUI panel)",
   "scripts": {

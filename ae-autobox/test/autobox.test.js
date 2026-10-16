@@ -680,7 +680,7 @@ test('Apply to Box upgrades a box made by AutoBox 1.0 and keeps its settings', (
   comp.select(box);
   host.api.applySettings(settings(host, { padding: 99, fillType: 2, layout: 3 }));
   assert.equal(host.alerts.length, 1);
-  assert.match(host.alerts[0], /Upgraded to AutoBox 2\.0\.0[\s\S]*AutoBox 1 \(now parented to it: Subtitle\)/);
+  assert.match(host.alerts[0], /Upgraded to AutoBox 2\.0\.1[\s\S]*AutoBox 1 \(now parented to it: Subtitle\)/);
   assert.deepEqual(names(), ['Box Rect', 'Stroke', 'Fill', 'Linear Gradient Fill', 'Radial Gradient Fill'], '1.0 fill and stroke replaced');
   near(box.effectValue('Padding'), 20, 'its own settings are kept');
   near(box.effectValue('Layout'), 2);
@@ -997,4 +997,41 @@ test('nesting ignores an outer stroke layer the user moved', () => {
   host.api.createBox(settings(host));
   const row = comp.layer('AutoBox 2');
   assert.ok(row.index > sub.index && row.index > cap.index, 'still behind its own layers');
+});
+
+test('shape items are never moved: a box whose stroke ended up below its fills is rebuilt in order', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const look = { fillColor: [1, 0.5, 0], strokeWidth: 4, strokeColor: [0, 1, 0] };
+  const box = create(host, comp, [title], look);
+  const vec = box.contentsState.children[0].children[0];
+  const names = () => vec.children.map((c) => c.name);
+  const ORDER = ['Box Rect', 'Stroke', 'Fill', 'Linear Gradient Fill', 'Radial Gradient Fill'];
+  assert.deepEqual(names(), ORDER);
+
+  const apply = () => {
+    comp.select(box);
+    host.api.applySettings(settings(host, look));
+    assert.deepEqual(host.alerts, [], 'no alerts');
+    assert.deepEqual(names(), ORDER);
+    near(item(box, 'AutoBox', 'Fill')('ADBE Vector Fill Color').value, [1, 0.5, 0, 1]);
+    near(item(box, 'AutoBox', 'Fill')('ADBE Vector Fill Opacity').value, 100);
+    near(item(box, 'AutoBox', 'Linear Gradient Fill')('ADBE Vector Grad Type').value, 1);
+    near(item(box, 'AutoBox', 'Radial Gradient Fill')('ADBE Vector Grad Type').value, 2);
+    near(item(box, 'AutoBox', 'Stroke')('ADBE Vector Stroke Color').value, [0, 1, 0, 1]);
+    near(item(box, 'AutoBox', 'Stroke')('ADBE Vector Stroke Opacity').value, 100);
+  };
+  // The stroke dragged below the fills in the timeline.
+  vec.children.push(vec.children.splice(1, 1)[0]);
+  vec.gen++;
+  apply();
+  // The stroke deleted: appending it would put it below the fills.
+  vec.children.splice(1, 1)[0].removed = true;
+  vec.gen++;
+  apply();
+
+  // The mock fails like After Effects does after a shape item is moved.
+  new Prop(vec.children[1]).moveTo(5);
+  assert.throws(() => new Prop(box.effectsState).addProperty('ADBE Tint'),
+    /internal verification failure, sorry! \{stream at index matchName="ADBE Vector Graphic - Fill" \(mismatch with resultP, expected "ADBE Vector Graphic - G-Fill"\)\}/);
 });
