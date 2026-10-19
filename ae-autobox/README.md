@@ -79,43 +79,67 @@ layers inside a box is nested in it.
 
 ### How the box animates (Smart Animate)
 
-The box doesn't follow its layers frame by frame. It looks at each layer's
-keyframes (Position, Scale, Rotation, Anchor Point, Opacity, text animator
-Range Selectors, and those of any parent between the layer and the box):
+The box doesn't follow its layers frame by frame. It reads each layer's
+keyframes (Position, Scale, Rotation, Anchor Point, Opacity, Source Text, text
+animator Range Selectors, and those of a nested box or null between the layer
+and the box):
 
-- A layer's **first move brings it in**. The box morphs to fit it, measured
-  where the move ends, on the curve of that move. Ease, overshoot and bounce
-  carry over.
-- Its **last move takes it out** (when it has two or more). The box doesn't
-  shrink: it keeps that space until the next layer comes in, then morphs to fit
-  the layers that are in. In a text swap, the box goes straight from the old
-  line's size to the new one's, on the new line's curve.
-- **Moves in between reposition it**, and the box follows on that move's curve.
-- A layer **without keyframes** is in from its in point. If it appears after
-  the box starts, the box morphs to fit it over **Morph Time** with **Morph
-  Ease**. Its out point takes it out.
-- **Source Text keyframes** resize the box (over Morph Time) while the layer is
-  in.
-- The **first** layer in grows the box from **Box Anchor** (for example from the
-  center, or from the left edge).
+- A move that **brings a layer into view** brings it in: it starts clear of where
+  it ends up (beyond the padding), or it fades or scales in, or a text animator
+  reveals it. The box morphs to fit it, measured where the move ends, on the
+  curve of that move. Ease, overshoot and bounce carry over, but overshoot never
+  makes the box cut a layer.
+- A move that **takes it clear away** (or fades or scales it out) takes it out. The
+  box keeps that space until the next layer comes in, then morphs to fit the
+  layers that are in. In a text swap, the box goes from the old line's size to
+  the new one's on the new line's curve. If a layer leaves while another is still
+  coming in, that morph refits without it.
+- **Smaller moves** (a nudge, a pulse, a slow drift) and **Source Text changes**
+  reposition it: the box follows.
+- Each layer's part of the box moves on **its own curve**, so staggered layers
+  blend smoothly, whatever their order in the timeline.
+- A layer **without keyframes** is in from its in point. If it appears after the
+  box starts, the box gets ready for it over **Morph Time** with **Morph Ease**,
+  and is there when it appears. Its out point takes it out. Text changes work the
+  same way.
+- A layer that's **on screen from the first frame** and only moves away is in from
+  the start. When a layer sits still and then makes one big move, AutoBox checks
+  which of its two places matches where the layers were when you made the box, so
+  **make the box while your layers are in place**.
+- A layer moved by **expressions** (a wiggle, a counter, a rig), or by **dense
+  keyframes** such as tracking data, is followed frame by frame.
+- **Grow From** sets how the box first appears: **Motion** grows it from the side
+  the first layer comes from (a layer rising from below grows the box up from its
+  bottom edge; a layer scaling in grows it from that layer's anchor; a fade finds
+  the box already there), **Box Anchor** grows it from that point, **Snap** shows
+  it whole. **When Empty** sets what happens when the last layer leaves: **Hold**
+  keeps the box, **Collapse** shrinks it away with that layer.
 
-When the automatic reading gets a layer wrong (say a layer that's in place from
-the start and only slides out), select it and click **In Box**. The layer gets
-an **In Box** checkbox, keyed to match what AutoBox was doing, so nothing
-changes yet. Then edit the keys: the layer counts only while In Box is on.
-Turning it on in the middle of a move borrows the rest of that move's curve.
-Off from the start, the layer never changes the box.
+When the automatic reading gets a layer wrong, select it and click **In Box**.
+The layer gets an **In Box** menu set to **Auto**. Keyframe it to **In** or **Out** to say
+yourself when the layer counts: switching to In just before or during a move
+borrows that move's curve, and without a move the box gets ready over Morph Time.
+**Skip** leaves the layer out but keeps the layers parented to it; nulls,
+adjustment layers and guide layers in a box are set to Skip automatically. A
+layer parented to another layer in the box is only in while its parent is.
 
 **Freeze** (on the box's Effect Controls) holds the box while it's on, then eases
-back to where the box should be over Morph Time. Turn **Smart Animate** off to
-have the box wrap its layers on every frame instead.
+back over Morph Time. On with no keyframes, it locks the box at its final shape.
+Turn **Smart Animate** off to have the box wrap its layers on every frame instead.
 
 ### Using the box as a track matte
 
 Select a box (or one of its layers) and click **Matte**. Every layer in the box
 uses it as its Alpha track matte, so they only show inside the box, and the box
-stays visible as their background. Click again to take the mattes off. This needs
-After Effects 2023 or newer, where any layer can be a track matte.
+stays visible as their background (and lasts as long as they do). Click again to
+take the mattes off. This needs After Effects 2023 or newer, where any layer can be
+a track matte.
+
+The matte is the box as it renders: if the box is see-through (Opacity or Fill
+Opacity below 100%, a gradient that fades out) or has effects such as a drop
+shadow, its layers fade or show along with it. Matte points this out. For a
+see-through or shadowed box, duplicate it, keep the copy fully opaque with no
+effects, and use the copy as the matte.
 
 ### The box's look
 
@@ -147,7 +171,9 @@ stops as you like).
 | Min Width / Min Height | The smallest the box may get. 0 means it fits the layers. |
 | Box Anchor | The point of the box that stays put when Min Width/Height make it bigger, and where it grows from when the first layer comes in. |
 | Ignore Hidden | When on, layers whose video switch is off don't count. |
-| Smart Animate | On: the box morphs as layers come and go (see above). Off: it wraps its layers on every frame. |
+| Smart Animate | On: the box morphs as layers come and go (see above). Off: it wraps its layers on every frame. Read at the box's first frame. |
+| Grow From | Motion, Box Anchor or Snap: how the box first appears (see above). |
+| When Empty | Hold or Collapse: what the box does when its last layer leaves. |
 | Morph Time | How long the box takes to fit a layer that has no keyframes to follow (seconds). Also used after Freeze. |
 | Morph Ease | Linear, Ease In, Ease Out or Ease In Out, for those morphs. |
 | Freeze | While on, the box holds its shape. |
@@ -173,27 +199,30 @@ Other buttons:
 - **Select Members**: selects every layer in the selected box.
 - **Matte** and **In Box**: see above.
 - **Release**: bakes the box's size into plain keyframes and removes AutoBox's
-  expressions, controls and In Box checkboxes. The look stays.
+  expressions, controls and In Box menus. The look stays.
 
 ### Good to know
 
 - **Riders.** A layer parented to another layer in the box counts too, measured
-  where it is. It moves in and out with its parent's keyframes.
-- **Don't parent nulls, cameras or lights to a box.** Cameras and lights are
-  ignored. A null can't be told apart from a regular layer, so it would be
-  measured as a 100×100 layer. Parent the box to the null instead.
+  where it is. It comes and goes with its parent, and can have its own entrance.
+- **Nested boxes.** A box inside a box counts through its layers, grown by its
+  padding and stroke, so both boxes move on the same curves. The outer box doesn't
+  see the inner box's Min Width/Height or Freeze.
+- **Cameras and lights** parented to a box are ignored. **Nulls**, adjustment and
+  guide layers get In Box set to Skip when you Create, Add to or Apply to the box;
+  one you parent to a box by hand later needs Apply to Box (or In Box › Skip).
 - **Layers are measured by their unrotated bounds** in the box's space. Rotate
   the box itself rather than the layers inside it.
-- **The box is 2D.** 3D layers are measured as if they were flat.
+- **The box is 2D.** 3D layers are measured as if they were flat (Z rotation
+  only: X/Y rotation, orientation and cameras are ignored).
 - **Precomps and footage are measured by their full frame.** Crop a precomp to
   its content (Composition › Crop Comp to Region of Interest), or box the layers
   inside it.
 - **Text height can jitter.** The box measures the actual letters, so a line with
   descenders (g, y, p) is a little taller than one without. Set **Min Height** to
   steady it.
-- **Expressions on your layers' transforms** (a wiggle, say) aren't keyframes,
-  so they don't bring a layer in or out. With Smart Animate the box measures the
-  layer where it settles, not where the wiggle puts it.
+- **The box has no motion blur of its own**, because its expressions would run
+  for every motion blur sample. It morphs on its layers' curves anyway.
 - **Many layers or long animations** make the box's expressions work harder. If
   playback slows down, turn on Freeze for stretches where nothing changes, or
   Release a finished box.

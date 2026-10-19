@@ -33,6 +33,8 @@
     minHeight: 0,
     ignoreHidden: 1,
     smartAnimate: 1,
+    growFrom: 1,
+    whenEmpty: 1,
     morphTime: 0.4,
     morphEase: 4,
     fillType: 1,
@@ -49,7 +51,7 @@
   // Which settings each section's Reset restores.
   var GROUPS = {
     box: ['padding', 'extraTop', 'extraRight', 'extraBottom', 'extraLeft', 'radius', 'minWidth', 'minHeight', 'anchor', 'ignoreHidden'],
-    animation: ['smartAnimate', 'morphTime', 'morphEase'],
+    animation: ['smartAnimate', 'growFrom', 'whenEmpty', 'morphTime', 'morphEase'],
     fill: ['fillType', 'fillColor', 'fillAngle', 'fillOpacity'],
     stroke: ['strokeType', 'strokeColor', 'strokeAngle', 'strokeWidth', 'strokeOpacity']
   };

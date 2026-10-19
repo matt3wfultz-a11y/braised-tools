@@ -97,6 +97,29 @@
           <div class="value"><label class="check"><input id="smart-animate" type="checkbox" data-key="smartAnimate"><span class="box"></span><span class="hint">Box morphs to fit layers coming in</span></label></div>
         </div>
 
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="grow-from">Grow From</label>
+          <div class="value">
+            <select id="grow-from" data-key="growFrom" title="Where the box grows from when the first layer comes in: the side it comes from (Motion), Box Anchor, or no growing (Snap)">
+              <option value="1">Motion</option>
+              <option value="2">Box Anchor</option>
+              <option value="3">Snap</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="prop">
+          <span class="twirl-space"></span>
+          <label class="name" for="when-empty">When Empty</label>
+          <div class="value">
+            <select id="when-empty" data-key="whenEmpty" title="When the last layer leaves: keep the box (Hold) or shrink it away with that layer (Collapse)">
+              <option value="1">Hold</option>
+              <option value="2">Collapse</option>
+            </select>
+          </div>
+        </div>
+
         <div class="prop" data-twirl="s-morphTime" data-open="false">
           <button type="button" class="twirl" aria-label="Show Morph Time slider"></button>
           <span class="name">Morph Time</span>
@@ -244,7 +267,7 @@
       </div>
       <div class="pair">
         <button type="button" data-action="matte" title="Use the box as the track matte of its layers; click again to remove. After Effects 2023+">Matte</button>
-        <button type="button" data-action="inbox" title="Add a keyframeable In Box checkbox to the selected layers: on = the box fits the layer">In Box</button>
+        <button type="button" data-action="inbox" title="Add an In Box menu to the selected layers: Auto, or keyframe In / Out to say when the box fits them">In Box</button>
       </div>
       <button type="button" data-action="release" title="Bake the box's size and remove the AutoBox rig from the selected box(es)">Release</button>
     </div>
@@ -254,8 +277,8 @@
     <details class="help">
       <summary>How it works</summary>
       <p><strong>Create Box</strong> puts a shape layer behind the selected layers and parents them to it. The layers get no expressions: animate them as usual. Moving, scaling or rotating the box moves the group. Any layer parented to a box is in that box, so editing text, renaming or reordering layers is safe. Use <strong>Add to Box</strong> and <strong>Remove</strong> to change what's in a box.</p>
-      <p><strong>Smart Animate</strong> follows the layers' keyframes, not every frame. A layer's first keyframed move brings it in, its last move (if it has two or more) takes it out, and the moves in between reposition it. The box morphs to fit the layers that are in, on the curve of the move that brought them, and holds when layers leave until the next one comes in. Layers without keyframes come in at their in point over <strong>Morph Time</strong>.</p>
-      <p><strong>In Box</strong> adds a checkbox to the selected layers: keyframe it to say when a layer counts. <strong>Freeze</strong>, in the box's Effect Controls, holds the box. <strong>Matte</strong> uses the box as its layers' track matte (After Effects 2023+); click it again to take the mattes off.</p>
+      <p><strong>Smart Animate</strong> follows the layers' keyframes, not every frame. A move that brings a layer into view (from clear of where it ends up, or fading or scaling in) brings it in; a move that takes it clear away (or fades or scales it out) takes it out; smaller moves reposition it. The box morphs to fit the layers that are in, each on its own curve, growing from the side a layer comes from (<strong>Grow From</strong>), and keeps a leaving layer's space until the next one comes in (or shrinks away with it: <strong>When Empty</strong>). Layers without keyframes, and text changes, get <strong>Morph Time</strong>.</p>
+      <p><strong>In Box</strong> adds a menu to the selected layers: leave it on Auto, or keyframe In / Out to say yourself when a layer counts. <strong>Freeze</strong>, in the box's Effect Controls, holds the box. <strong>Matte</strong> uses the box as its layers' track matte (After Effects 2023+); click it again to take the mattes off.</p>
       <p>The look lives in the box's <strong>Contents</strong>: Fill, Stroke, Gradient Fill, Gradient Stroke and the rectangle's Roundness, native and yours to edit or animate. Gradients stretch with the box: their Start and End Point are percentages of it. Padding, size and animation settings are in the box's <strong>Effect Controls</strong>.</p>
       <p>Drag a blue value left or right to change it (Shift for bigger steps, Ctrl/Cmd for finer ones), or click it to type. These panel values are the defaults for new boxes; <strong>Apply to Box</strong> pushes them onto selected boxes (animated properties are left alone).</p>
       <p><strong>Release</strong> bakes the box's size into plain values and keyframes and removes the rig.</p>

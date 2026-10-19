@@ -348,7 +348,7 @@ test('colors, Apply to Box, Select Members and Release work from the panel', asy
   assert.ok(!hasEffect(box, 'Padding') && !hasEffect(box, 'Smart Animate'), 'the rig is removed');
 });
 
-test('the Animation section sets Smart Animate, Morph Time and Morph Ease', async () => {
+test('the Animation section sets Smart Animate, Grow From, When Empty, Morph Time and Morph Ease', async () => {
   const host = createHost();
   const { comp, title, sub } = scene(host);
   const p = await openPanel(host);
@@ -385,6 +385,10 @@ test('the Animation section sets Smart Animate, Morph Time and Morph Ease', asyn
   assert.equal(slider.querySelector('.thumb').style.left, '25%');
   p.choose('#morph-ease', 2);
   assert.equal(v('morphEase'), 2);
+  p.choose('#grow-from', 3);
+  assert.equal(v('growFrom'), 3);
+  p.choose('#when-empty', 2);
+  assert.equal(v('whenEmpty'), 2);
 
   comp.select(title, sub);
   await p.click('[data-action="create"]');
@@ -393,10 +397,13 @@ test('the Animation section sets Smart Animate, Morph Time and Morph Ease', asyn
   assert.equal(box.effectValue('Smart Animate'), 0);
   assert.equal(box.effectValue('Morph Time'), 0.5);
   assert.equal(box.effectValue('Morph Ease'), 2);
+  assert.equal(box.effectValue('Grow From'), 3);
+  assert.equal(box.effectValue('When Empty'), 2);
 
   p.type('padding', 10);
   await p.click('.reset[data-group="animation"]');
-  assert.deepEqual([v('smartAnimate'), v('morphTime'), v('morphEase')], [1, 0.4, 4]);
+  assert.deepEqual([v('smartAnimate'), v('growFrom'), v('whenEmpty'), v('morphTime'), v('morphEase')], [1, 1, 1, 0.4, 4]);
+  assert.equal(p.$('#grow-from').value, '1');
   assert.ok(p.$('#smart-animate').checked);
   assert.equal(hot.textContent, '0.40');
   assert.equal(p.$('#morph-ease').value, '4');
@@ -430,7 +437,7 @@ test('Matte and In Box run on the selected box and layers', async () => {
   assert.match(lastCall(), /AutoBoxHost\.run\("inbox", /);
   assert.equal(p.status().textContent, '');
   assert.deepEqual(host.alerts, []);
-  assert.equal(title.effectValue('In Box'), 1, 'on: nothing changes until it is keyframed');
+  assert.equal(title.effectValue('In Box'), 1, 'Auto: nothing changes until it is keyframed');
   assert.ok(!hasEffect(sub, 'In Box'), 'only the selected layer gets one');
   assert.ok(!hasEffect(box, 'In Box'));
 });
