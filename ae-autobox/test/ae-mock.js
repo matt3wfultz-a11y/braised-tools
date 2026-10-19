@@ -277,6 +277,13 @@ function inShapeContents(s) {
   return false;
 }
 
+// Like After Effects, scripts can't change anything on a locked layer.
+function editable(s) {
+  const layer = s && s.layer;
+  if (layer && layer.locked) throw new Error(`After Effects error: ${layer.name} is locked`);
+  return s;
+}
+
 // Adding, removing or moving a property checks the layer the way After
 // Effects does after a shape item was moved (see Prop.moveTo).
 function verified(s) {
@@ -316,7 +323,7 @@ class Prop {
     return new Prop(s);
   }
   addProperty(matchName) {
-    const s = verified(this._c());
+    const s = verified(editable(this._c()));
     const make = FACTORIES[matchName];
     if (!make) throw new Error(`Can't add ${matchName} here`);
     const child = s.add(make(s));
@@ -324,7 +331,7 @@ class Prop {
     return new Prop(child);
   }
   remove() {
-    const s = verified(this._c());
+    const s = verified(editable(this._c()));
     s.parent.children.splice(s.parent.children.indexOf(s), 1);
     s.parent.gen++;
     s.removed = true;
@@ -360,7 +367,7 @@ class Prop {
   get canSetExpression() { return !this._c().group && !this._c().noValue; }
   get expression() { return this._c().expression; }
   set expression(v) {
-    const s = this._c();
+    const s = editable(this._c());
     if (s.noValue) throw new Error(`${s.name} can't have an expression`);
     s.expression = String(v);
     s.expressionError = '';
@@ -391,12 +398,12 @@ class Prop {
     return v;
   }
   setValue(v) {
-    const s = this._c();
+    const s = editable(this._c());
     if (s.keys.length) throw new Error(`Can't setValue on keyframed ${s.name}`);
     s.value = this._check(v);
   }
   setValueAtTime(t, v) {
-    const s = this._c();
+    const s = editable(this._c());
     const val = this._check(v);
     const k = s.keys.find((x) => Math.abs(x.t - t) < 1e-9);
     if (k) k.v = val;
@@ -407,7 +414,7 @@ class Prop {
     ts.forEach((t, i) => this.setValueAtTime(t, vs[i]));
   }
   removeKey(i) {
-    const s = this._c();
+    const s = editable(this._c());
     if (i < 1 || i > s.keys.length) throw new Error(`No key ${i}`);
     s.keys.splice(i - 1, 1);
   }
@@ -417,6 +424,7 @@ class Prop {
     const s = this._key(i);
     s.keys[i - 1].hold = (outType === undefined ? inType : outType) === KEY_HOLD;
   }
+  keyInInterpolationType(i) { return this.keyOutInterpolationType(i); }
   keyOutInterpolationType(i) { return this._key(i).holdOnly || this._c().keys[i - 1].hold ? KEY_HOLD : KEY_LINEAR; }
   setSpatialAutoBezierAtKey(i) { this._key(i); }
   setSpatialContinuousAtKey(i) { this._key(i); }
@@ -617,6 +625,10 @@ class Layer {
   get parent() { return this._parent; }
   // Like the parent pick whip: compensate so the layer doesn't jump.
   set parent(p) {
+    editable(this.root);
+    this._setParent(p);
+  }
+  _setParent(p) {
     if (p) for (let l = p; l; l = l.parent) if (l === this) throw new Error('Parent cycle');
     const t = this.comp.time, old = this._parent;
     const conv = (v) => {
@@ -642,7 +654,10 @@ class Layer {
     sc.value = [(sc.value[0] * so[0]) / sn[0], (sc.value[1] * so[1]) / sn[1], sc.value[2]];
     this._parent = p || null;
   }
-  setParentWithJump(p) { this._parent = p || null; }
+  setParentWithJump(p) {
+    editable(this.root);
+    this._parent = p || null;
+  }
   moveAfter(other) {
     const list = this.comp._layers;
     list.splice(list.indexOf(this), 1);
@@ -659,8 +674,9 @@ class Layer {
     list.unshift(this);
   }
   remove() {
+    editable(this.root);
     this.comp._layers.forEach((l) => {
-      if (l._parent === this) l.parent = null;
+      if (l._parent === this) l._setParent(null);
       if (l._matte === this) l._matte = null;
     });
     this.comp._layers.splice(this.comp._layers.indexOf(this), 1);
@@ -708,6 +724,7 @@ class AVLayer extends Layer {
   get setTrackMatte() {
     if (!features.setTrackMatte) return undefined;
     return (layer, type) => {
+      editable(this.root);
       // setTrackMatte(null, any type) removes the matte and keeps the type;
       // a layer with NO_TRACK_MATTE is a documented no-op.
       if (!layer) {
@@ -743,8 +760,9 @@ class TextLayer extends AVLayer {
     this.textState = this.root.add(group('Text', 'ADBE Text Properties', [group('Animators', 'ADBE Text Animators')]));
   }
   // Test helper: a text animator with one Range Selector; returns the
-  // selector's Start / End / Offset states.
-  addAnimator() {
+  // selector's Start / End / Offset states. o.opacity: the animator sets
+  // the selected characters' Opacity (0 hides them, like Typewriter).
+  addAnimator(o = {}) {
     const animators = this.textState.children[0];
     const n = animators.children.length + 1;
     const start = prop('Start', 'ADBE Text Percent Start', 0);
@@ -752,7 +770,8 @@ class TextLayer extends AVLayer {
     const offset = prop('Offset', 'ADBE Text Percent Offset', 0);
     animators.add(group(`Animator ${n}`, 'ADBE Text Animator', [
       group('Selectors', 'ADBE Text Selectors', [group('Range Selector 1', 'ADBE Text Selector', [start, end, offset])]),
-      group('Properties', 'ADBE Text Animator Properties'),
+      group('Properties', 'ADBE Text Animator Properties',
+        o.opacity === undefined ? [] : [prop('Opacity', 'ADBE Text Opacity', o.opacity)]),
     ]));
     return { start, end, offset };
   }

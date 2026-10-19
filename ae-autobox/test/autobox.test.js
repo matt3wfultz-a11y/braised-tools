@@ -101,10 +101,12 @@ function oldApi(file) {
 // ---------------------------------------------------------------------------
 test('script and every expression it writes are plain ES3 (Legacy ExtendScript engine)', () => {
   const host = createHost();
-  acorn.parse(fs.readFileSync(SCRIPT_PATH, 'utf8'), { ecmaVersion: 3 });
-  for (const kind of ['size', 'position']) acorn.parse(host.api.buildExpression(kind), { ecmaVersion: 3 });
-  acorn.parse(host.api.buildSwitchProbe(3, 1), { ecmaVersion: 3 });
-  acorn.parse(host.api.gradientPointExpression(), { ecmaVersion: 3 });
+  // allowReserved: false: ES3 also reserves words like short, int and class.
+  const es3 = { ecmaVersion: 3, allowReserved: false };
+  acorn.parse(fs.readFileSync(SCRIPT_PATH, 'utf8'), es3);
+  for (const kind of ['size', 'position']) acorn.parse(host.api.buildExpression(kind, [[0, 0, 10, 10, 1]]), es3);
+  acorn.parse(host.api.buildSwitchProbe(3, 1), es3);
+  acorn.parse(host.api.gradientPointExpression(), es3);
 });
 
 test('the engine only reads controls that every box gets', () => {
@@ -1091,4 +1093,483 @@ test('the box has no motion blur of its own', () => {
   const { comp, title } = scene(host);
   const box = create(host, comp, [title]);
   assert.equal(box.motionBlur, false);
+});
+
+// ---------------------------------------------------------------------------
+// Smart Animate: cases from the final review
+// ---------------------------------------------------------------------------
+// How far a layer sticks out of the box at t (0: inside).
+function cut(box, layer, t) {
+  const b = box.boxCompBounds(t), l = layer.compBounds(t);
+  return Math.max(0, b.l - l.l, l.r - b.r, b.t - l.t, l.b - b.b);
+}
+// A jump: an edge moving much further in one frame than in the frames
+// around it, over [a, b]. Returns the biggest one (0: none).
+function jumps(box, a, b) {
+  const R = [];
+  for (let f = Math.round(a * 30); f <= Math.round(b * 30); f++) R.push(rect(box, f / 30));
+  const step = (i) => (R[i].w <= 0.01 || R[i - 1].w <= 0.01 ? 0
+    : Math.max(Math.abs(R[i].l - R[i - 1].l), Math.abs(R[i].r - R[i - 1].r), Math.abs(R[i].t - R[i - 1].t), Math.abs(R[i].b - R[i - 1].b)));
+  let worst = 0;
+  for (let i = 2; i < R.length - 1; i++) {
+    const d = step(i);
+    if (d > 25 && d > 4 * Math.max(step(i - 1), step(i + 1))) worst = Math.max(worst, d);
+  }
+  return worst;
+}
+// Biggest frame-to-frame move of any edge while the box shows, over [a, b].
+function maxStep(box, a, b) {
+  let prev = null, worst = 0;
+  for (let f = Math.round(a * 30); f <= Math.round(b * 30); f++) {
+    const r = rect(box, f / 30), vis = r.w > 0.01 && r.h > 0.01;
+    if (prev && vis) worst = Math.max(worst, Math.abs(r.l - prev.l), Math.abs(r.r - prev.r), Math.abs(r.t - prev.t), Math.abs(r.b - prev.b));
+    prev = vis ? r : null;
+  }
+  return worst;
+}
+function textComp(host, list, duration = 10) {
+  const comp = host.newComp({ duration });
+  const out = {};
+  list.slice().reverse().forEach(([name, x, y, w, h, o]) => {
+    out[name] = comp.layers.addText(name, Object.assign({ position: [x, y], rect: { left: 0, top: -h + 10, width: w, height: h } }, o));
+  });
+  return { comp, L: out };
+}
+
+test('a fade, scale or axis shorter than the slide it comes with: fitted where the layer settles', () => {
+  for (const kind of ['fade', 'scale', 'axis']) {
+    const host = createHost();
+    const { comp, L } = textComp(host, [['Title', 200, 300, 400, 60]]);
+    const t = L.Title;
+    const box = create(host, comp, [t], { padding: 20, anchor: 1 });
+    if (kind === 'axis') {
+      t.tprop('ADBE Position').dimensionsSeparated = true;
+      keys(t.tprop('ADBE Position_0'), [[0, -700, smooth], [0.4, 200]]);
+      keys(t.tprop('ADBE Position_1'), [[0, 700, smooth], [0.8, 300]]);
+    } else {
+      slide(t, [[0, 0, 400, smooth], [0.667, 0, 0]]);
+      if (kind === 'fade') keys(t.tprop('ADBE Opacity'), [[0, 0], [0.2, 100]]);
+      else keys(t.tprop('ADBE Scale'), [[0, [0, 0, 100]], [0.2, [100, 100, 100]]]);
+    }
+    for (const at of [1, 3]) near(cut(box, t, at), 0, `${kind}: inside at ${at}`);
+  }
+});
+
+test('an out point takes a layer out even when the next one is elsewhere; Collapse shrinks at the out point', () => {
+  for (const whenEmpty of [1, 2]) {
+    const host = createHost();
+    const { comp, L } = textComp(host, [['A', 200, 300, 700, 60, { outPoint: 3 }], ['B', 200, 500, 300, 60, { inPoint: 4 }]]);
+    const box = create(host, comp, [L.A, L.B], { padding: 0, anchor: 1, whenEmpty });
+    near(rect(box, 1).w, 700);
+    if (whenEmpty === 1) near(rect(box, 3.5).w, 700, 'held');
+    else near(rect(box, 3.5).w, 0, 'collapsed');
+    for (const t of [5, 8]) near([rect(box, t).w, rect(box, t).h], [300, 60], `B only at ${t}`);
+  }
+});
+
+test('an entrance through a middle key (two legs, an arc) ends fitted where the layer lands', () => {
+  for (const legs of [[[0, -900, 0, smooth], [0.3, -400, 0, smooth], [0.6, 0, 0]], [[0, -600, 300, smooth], [0.4, -300, -80, smooth], [0.8, 0, 0]]]) {
+    const host = createHost();
+    const { comp, L } = textComp(host, [['Title', 600, 300, 400, 60]]);
+    const box = create(host, comp, [L.Title], { padding: 20, anchor: 1 });
+    slide(L.Title, legs);
+    for (const t of [1, 3]) near(cut(box, L.Title, t), 0, `inside at ${t}`);
+  }
+});
+
+test('a layer whose head is trimmed past its keys is in from its in point', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['A', 200, 300, 700, 60, { inPoint: 2 }], ['Sub', 200, 400, 300, 36]]);
+  const box = create(host, comp, [L.A, L.Sub], { padding: 0, anchor: 1 });
+  slide(L.A, [[0, 0, 300, smooth], [0.5, 0, 0]]);
+  near(rect(box, 1).w, 300, 'not yet');
+  for (const t of [2, 3, 6]) near(cut(box, L.A, t), 0, `in at ${t}`);
+});
+
+test('a layer that lands before a slower one is never cut', () => {
+  // A layer without keys appearing while another slides in slowly.
+  let host = createHost();
+  let { comp, L } = textComp(host, [['C', 200, 300, 200, 44], ['A', 200, 380, 600, 44], ['B', 200, 460, 400, 44, { inPoint: 1.2 }]], 8);
+  let box = create(host, comp, [L.C, L.A, L.B], { padding: 10, anchor: 1 });
+  slide(L.A, [[1, -900, 0, smooth], [1.6, 0, 0]]);
+  for (const t of [1.2, 1.3, 1.4, 2]) near(cut(box, L.B, t), 0, `B inside at ${t}`);
+  near(jumps(box, 0.5, 2), 0, 'no jumps');
+  // A fast line landing under a slow one.
+  host = createHost();
+  ({ comp, L } = textComp(host, [['Line 0', 200, 300, 600, 44], ['Line 1', 200, 370, 300, 44]], 8));
+  box = create(host, comp, [L['Line 0'], L['Line 1']], { padding: 10, anchor: 1 });
+  slide(L['Line 0'], [[0, -900, 0, smooth], [1.2, 0, 0]]);
+  slide(L['Line 1'], [[0.2, -900, 0, smooth], [0.4, 0, 0]]);
+  for (const t of [0.4, 0.5, 0.6, 0.8]) near(cut(box, L['Line 1'], t), 0, `Line 1 inside at ${t}`);
+});
+
+test('a list rising into place line by line (a matte reveal) fits every line', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 8 });
+  const lines = [];
+  for (let i = 4; i >= 0; i--) lines.unshift(comp.layers.addText(`Line ${i}`, { position: [700, 300 + i * 70], rect: { left: 0, top: -40, width: 300 + i * 40, height: 44 } }));
+  const box = create(host, comp, lines, { padding: 16, anchor: 1 });
+  lines.forEach((l, i) => slide(l, [[0.2 + i * 0.4, 0, 60, smooth], [0.6 + i * 0.4, 0, 0]]));
+  near(rect(box, 0.1).w, 0, 'nothing in before the first line rises');
+  lines.forEach((l, i) => {
+    for (const t of [0.61 + i * 0.4, 3, 5]) near(cut(box, l, t), 0, `line ${i} at ${t}`);
+  });
+});
+
+test('nothing shows before the first layer comes in, even when a later one gets ready early', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['A', 200, 300, 500, 60], ['B', 200, 400, 300, 36, { inPoint: 1.2 }]]);
+  const box = create(host, comp, [L.A, L.B], { padding: 10, anchor: 1, morphTime: 0.4 });
+  slide(L.A, [[1, -600, 0, smooth], [1.5, 0, 0]]);
+  for (let f = 0; f <= 30; f++) near(rect(box, f / 30).w, 0, `hidden at frame ${f}`);
+  assert.ok(rect(box, 1.1).w > 0);
+  near(jumps(box, 1, 2), 0, 'grows without jumps');
+  near(cut(box, L.B, 1.2), 0, 'ready when B appears');
+});
+
+test('Collapse, then a new layer: it grows where the new layer is, without jumps', () => {
+  // B appears elsewhere long after; B slides into the same spot while the box is still collapsing.
+  let host = createHost();
+  let { comp, L } = textComp(host, [['A', 200, 300, 500, 60], ['B', 900, 700, 300, 60, { inPoint: 5 }]]);
+  let box = create(host, comp, [L.A, L.B], { padding: 20, anchor: 5, whenEmpty: 2 });
+  slide(L.A, [[2, 0, 0, smooth], [2.5, -900, 0]]);
+  near(rect(box, 3).w, 0, 'collapsed');
+  const at47 = box.boxCompBounds(4.7);
+  assert.ok(at47.l > 700 && at47.t > 500, 'grows around B, not where A was');
+  near(cut(box, L.B, 5), 0);
+  near(jumps(box, 0, 7), 0, 'no jumps');
+  host = createHost();
+  ({ comp, L } = textComp(host, [['A', 700, 500, 500, 60], ['B', 700, 500, 500, 60]], 8));
+  box = create(host, comp, [L.A, L.B], { padding: 20, anchor: 1, whenEmpty: 2 });
+  slide(L.A, [[2, 0, 0, smooth], [2.5, 0, -400]]);
+  slide(L.B, [[0, 0, 400], [2.2, 0, 400, smooth], [2.7, 0, 0]]);
+  assert.ok(maxStep(box, 2, 3) < 25, 'picks up from the collapsing box');
+  near(cut(box, L.B, 3), 0);
+});
+
+test('typewriter: an animator that hides text tells when it shows; erasing takes it out', () => {
+  // On screen from frame 0, erased at 3..4 by an Opacity 0 animator (Start 100 -> 0 selects more).
+  let host = createHost();
+  let { comp, L } = textComp(host, [['Title', 200, 300, 400, 60]]);
+  let box = create(host, comp, [L.Title], { padding: 20, anchor: 1 });
+  keys(L.Title.addAnimator({ opacity: 0 }).start, [[0, 100], [3, 100], [4, 0]]);
+  for (const t of [0, 1, 2.9]) near(rect(box, t).w, 440, `in from the start (${t})`);
+  // A types on and off, then B types on in the same spot: the box goes from A's size to B's.
+  host = createHost();
+  ({ comp, L } = textComp(host, [['A', 200, 300, 700, 60], ['B', 200, 300, 300, 60]]));
+  box = create(host, comp, [L.A, L.B], { padding: 0, anchor: 1 });
+  keys(L.A.addAnimator({ opacity: 0 }).start, [[0, 0], [1, 100], [2, 100], [3, 0]]);
+  keys(L.B.addAnimator({ opacity: 0 }).start, [[0, 0], [3, 0], [4, 100]]);
+  near(rect(box, 0).w, 0, 'nothing typed yet');
+  near(rect(box, 1.5).w, 700);
+  near(rect(box, 5).w, 300);
+  // Without a hiding animator, a reveal that runs back takes it out too.
+  host = createHost();
+  ({ comp, L } = textComp(host, [['A', 200, 300, 700, 60], ['B', 200, 300, 300, 60]]));
+  box = create(host, comp, [L.A, L.B], { padding: 0, anchor: 1 });
+  keys(L.A.addAnimator().end, [[0, 0], [1, 100], [2, 100], [3, 0]]);
+  keys(L.B.addAnimator().end, [[3, 0], [4, 100]]);
+  near(rect(box, 5).w, 300);
+});
+
+test('a layer leaving while an overshooting entrance is under way still refits the box', () => {
+  const back = (f) => 1 + 2.7 * Math.pow(f - 1, 3) + 1.7 * Math.pow(f - 1, 2);
+  for (const ease of [smooth, back]) {
+    const host = createHost();
+    const { comp, L } = textComp(host, [['A', 700, 500, 700, 60], ['B', 700, 500, 300, 60]], 8);
+    const box = create(host, comp, [L.A, L.B], { padding: 20, anchor: 1 });
+    slide(L.B, [[0, 0, 300], [1.8, 0, 300, ease], [2.4, 0, 0]]);
+    slide(L.A, [[2.1, 0, 0, smooth], [2.4, 0, -300]]);
+    near(rect(box, 5).w, 340);
+  }
+  // B pops in (no curve to follow) just before A leaves.
+  const host = createHost();
+  const { comp, L } = textComp(host, [['A', 700, 500, 700, 60], ['B', 700, 500, 300, 60]], 8);
+  const box = create(host, comp, [L.A, L.B], { padding: 20, anchor: 1 });
+  slide(L.B, [[0, 0, 2000, 'hold'], [1.8, 0, 0]]);
+  slide(L.A, [[2, 0, 0, smooth], [2.3, 0, -300]]);
+  near(rect(box, 5).w, 340);
+  near(jumps(box, 1.5, 3), 0, 'no jumps');
+});
+
+test('layers coming in together: the same box whatever their order in the timeline', () => {
+  const easeOut = (f) => 1 - Math.pow(1 - f, 3);
+  const build = (reverse) => {
+    const host = createHost();
+    const { comp, L } = textComp(host, [['Title', 200, 300, 300, 60], ['Sub', 200, 380, 600, 36]]);
+    if (reverse) L.Sub.moveToBeginning();
+    const box = create(host, comp, [L.Title, L.Sub], { padding: 10, anchor: 1 });
+    slide(L.Title, [[0.5, -800, 0, easeOut], [1, 0, 0]]);
+    slide(L.Sub, [[0.5, 800, 0], [1, 0, 0]]);
+    return box;
+  };
+  const a = build(false), b = build(true);
+  for (let f = 15; f <= 30; f++) {
+    const r1 = rect(a, f / 30), r2 = rect(b, f / 30);
+    near([r1.l, r1.t, r1.r, r1.b], [r2.l, r2.t, r2.r, r2.b], `frame ${f}`);
+  }
+});
+
+test('wiggler keys: the box covers every one of them; Source Text keys still reshape it', () => {
+  let host = createHost();
+  let { comp, L } = textComp(host, [['Title', 600, 300, 400, 60]]);
+  let box = create(host, comp, [L.Title], { padding: 20, anchor: 1 });
+  const list = [];
+  for (let k = 0; k < 20; k++) list.push([1 + k * 0.1, k === 2 ? 70 : (k % 2 ? -20 : 20), 0]);
+  slide(L.Title, list);
+  for (let f = 0; f <= 120; f += 3) near(cut(box, L.Title, f / 30), 0, `frame ${f}`);
+  host = createHost();
+  comp = host.newComp({ duration: 10 });
+  const times = [];
+  for (let k = 0; k < 16; k++) times.push(1 + k / 15);
+  const title = comp.layers.addText('Title', { position: [200, 300], textKeys: [0].concat(times),
+    rect: (t) => ({ left: 0, top: -50, width: 30 * times.filter((tk) => t >= tk).length + 1, height: 60 }) });
+  box = create(host, comp, [title], { padding: 10, anchor: 1 });
+  assert.ok(rect(box, 0.5).w < 30, 'follows the typing');
+  for (const t of [1.5, 3, 5]) near(cut(box, title, t), 0, `at ${t}`);
+});
+
+test('an expression on top of keyframes is followed too', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Title', 600, 300, 400, 60]]);
+  const box = create(host, comp, [L.Title], { padding: 20, anchor: 1 });
+  slide(L.Title, [[0, 0, 300, smooth], [0.5, 0, 0]]);
+  L.Title.tprop('ADBE Position').s.expression = '[value[0] + 60 * Math.sin(time * 3), value[1]]';
+  for (let f = 15; f <= 300; f += 7) near(cut(box, L.Title, f / 30), 0, `frame ${f}`);
+});
+
+test('Freeze with no keys holds the box as it is at the end, whatever the current time', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Title', 600, 300, 400, 60]]);
+  const box = create(host, comp, [L.Title], { padding: 20, anchor: 1 });
+  L.Title.tprop('ADBE Position').s.expression = '[value[0] + time * 10, value[1]]';
+  box.setEffect('Freeze', 1);
+  const end = rect(box, 10);
+  assert.ok(Math.abs(end.l - 100) < 1, `near the layer's last place (${end.l})`);
+  for (const t of [0, 5]) near([rect(box, t).l, rect(box, t).w], [end.l, end.w], `same at ${t}`);
+});
+
+test('a layer keyed to Skip still lets the layers parented to it count; a camera on the way up is ignored', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Title', 200, 300, 400, 60], ['Subtitle', 220, 380, 300, 36], ['C', 200, 600, 100, 36]]);
+  const box = create(host, comp, [L.Title, L.Subtitle, L.C], { padding: 0, anchor: 1 });
+  slide(L.C, [[4, 0, 400, smooth], [4.5, 0, 0]]);
+  const dot = comp.layers.addShapeMember('Dot', { rect: { left: 0, top: 0, width: 10, height: 10 } });
+  dot.parent = L.Subtitle;
+  dot.tprop('ADBE Position').s.value = [-100, 0, 0];
+  comp.select(L.Subtitle);
+  host.api.addInBoxToggles();
+  const ib = L.Subtitle.effectsState.children.find((e) => e.name === 'In Box').children[0];
+  keys(ib, [[0, 1], [2, 4]]);
+  near(cut(box, dot, 5), 0, 'the dot still counts');
+  const cam = comp.layers.addCamera('Camera 1');
+  cam.parent = box;
+  const label = comp.layers.addText('Label', { position: [0, 0], rect: { left: 0, top: -20, width: 100, height: 24 } });
+  label.parent = cam;
+  near(cut(box, L.Title, 5), 0);
+  assert.deepEqual(box.rectShapes()[0].children.map((c) => c.expressionError).filter(Boolean), []);
+});
+
+test('a layer on screen at its in point that moves away at once was in', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['A', 700, 500, 500, 60], ['B', 700, 500, 300, 60]]);
+  const box = create(host, comp, [L.A, L.B], { padding: 20, anchor: 1 });
+  slide(L.A, [[0, 0, 0, smooth], [0.5, -1400, 0]]);
+  slide(L.B, [[1, 0, 300, smooth], [1.5, 0, 0]]);
+  near(rect(box, 0).w, 540, 'around A');
+  near(rect(box, 0.4).w, 540, 'holds while A leaves');
+  near(rect(box, 2).w, 340, 'then B');
+});
+
+// ---------------------------------------------------------------------------
+// Panel actions: cases from the final review
+// ---------------------------------------------------------------------------
+test('Remove takes its box off as the layer\'s matte, keeps an outer box, and Matte off clears leftovers', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const icon = comp.layers.addShapeMember('Icon', { position: [150, 280], rect: { left: 0, top: -30, width: 30, height: 30 } });
+  const inner = create(host, comp, [icon, title]);
+  const outer = create(host, comp, [inner, sub], { padding: 20 });
+  comp.select(inner);
+  host.api.matteBoxes();
+  assert.equal(title.trackMatteLayer, inner);
+  comp.select(title);
+  host.api.removeFromBox();
+  assert.equal(title.parent, outer, 'still in the outer box');
+  assert.equal(title.trackMatteLayer, null, 'no longer matted to the box it left');
+  near(cut(outer, title, 1), 0, 'the outer box still fits it');
+  // A layer taken out by hand: Matte off clears it too.
+  const host2 = createHost();
+  const s2 = scene(host2);
+  const box = create(host2, s2.comp, [s2.title, s2.sub]);
+  s2.comp.select(box);
+  host2.api.matteBoxes();
+  s2.sub.parent = null;
+  assert.equal(s2.sub.trackMatteLayer, box);
+  s2.comp.select(box);
+  host2.api.matteBoxes();
+  assert.equal(s2.title.trackMatteLayer, null);
+  assert.equal(s2.sub.trackMatteLayer, null);
+});
+
+test('Matte on several boxes: one click turns them all on (or all off)', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const a = create(host, comp, [title]);
+  const b = create(host, comp, [sub]);
+  comp.select(a);
+  host.api.matteBoxes();
+  host.alerts.length = 0;
+  comp.select(a, b);
+  host.api.matteBoxes();
+  assert.equal(title.trackMatteLayer, a);
+  assert.equal(sub.trackMatteLayer, b);
+  comp.select(a, b);
+  host.api.matteBoxes();
+  assert.equal(title.trackMatteLayer, null);
+  assert.equal(sub.trackMatteLayer, null);
+});
+
+test('Matte notes a see-through gradient fill', () => {
+  const host = createHost();
+  const { comp, title } = scene(host);
+  const box = create(host, comp, [title], { fillType: 2, fillOpacity: 40 });
+  comp.select(box);
+  host.api.matteBoxes();
+  const note = host.alerts.pop();
+  assert.match(note, /Gradient Fill Opacity/);
+  assert.match(note, /color stops/);
+});
+
+test('Release of a nested box: the outer box still wraps it', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const icon = comp.layers.addShapeMember('Icon', { position: [150, 280], rect: { left: 0, top: -30, width: 30, height: 30 } });
+  const inner = create(host, comp, [icon, title], { padding: 30, strokeWidth: 4 });
+  const outer = create(host, comp, [inner, sub], { padding: 20 });
+  const before = outer.boxCompBounds(1);
+  comp.select(inner);
+  host.confirmAnswer = true;
+  host.api.releaseBoxes();
+  const after = outer.boxCompBounds(1);
+  near([after.l, after.t, after.r, after.b], [before.l, before.t, before.r, before.b]);
+});
+
+test('a rectangle of your own in the box\'s group is left alone, and Release bakes the box\'s own', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub]);
+  const contents = box.contentsState.children.find((c) => c.name === 'AutoBox').children[0];
+  const tab = new Prop(contents).addProperty('ADBE Vector Shape - Rect');
+  tab.name = 'Tab';
+  tab.property('ADBE Vector Rect Size').setValue([80, 20]);
+  const s = contents.children.pop();
+  contents.children.unshift(s);
+  comp.select(box);
+  host.api.applySettings(settings(host, { padding: 10 }));
+  near(tab.property('ADBE Vector Rect Size').value, [80, 20], 'untouched');
+  assert.equal(tab.property('ADBE Vector Rect Size').expression, '');
+  host.confirmAnswer = true;
+  comp.select(box);
+  host.api.releaseBoxes();
+  assert.deepEqual(expressions(comp), []);
+});
+
+test('a keyframed stroke width keeps the stroke on (Apply, and converting an old box with hold keys)', () => {
+  let host = createHost();
+  let { comp, title, sub } = scene(host);
+  let box = create(host, comp, [title, sub], { strokeWidth: 4 });
+  keys(item(box, 'Stroke')('ADBE Vector Stroke Width'), [[1, 0], [2, 8]]);
+  comp.select(box);
+  host.api.applySettings(settings(host, { strokeWidth: 0 }));
+  assert.ok(enabled(box).includes('Stroke'), 'still on');
+  // A 2.0.1 box: Stroke Width keyed 0 -> 6, Corner Radius held at 0 until 2s.
+  host = createHost();
+  ({ comp, title, sub } = scene(host));
+  const old = oldApi('AutoBox-2.0.1.jsx');
+  globalThis.AUTOBOX_TEST = {};
+  comp.select(title, sub);
+  old.createBox(Object.assign({}, old.DEFAULTS));
+  box = comp._layers.find((l) => l.name.indexOf('AutoBox') === 0 && !/Stroke/.test(l.name));
+  const ctl = (name) => box.effectsState.children.find((e) => e.name === name).children[0];
+  keys(ctl('Stroke Width'), [[1, 0], [2, 6]]);
+  keys(ctl('Corner Radius'), [[0, 0, 'hold'], [2, 30]]);
+  comp.time = 0;
+  comp.select(box);
+  host.confirmAnswer = true;
+  host.api.applySettings(settings(host));
+  assert.ok(enabled(box).includes('Stroke'), 'converted stroke is on');
+  near(item(box, 'Stroke')('ADBE Vector Stroke Width').valueAtTime(3, false), 6);
+  near(new Prop(items(box).find((c) => c.name === 'Box Rect').children[2]).valueAtTime(1, false), 0, 'hold key kept');
+});
+
+test('In Box is for layers, not boxes', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const inner = create(host, comp, [title]);
+  create(host, comp, [inner, sub]);
+  comp.select(inner);
+  host.api.addInBoxToggles();
+  assert.match(host.alerts.pop(), /it's a box/);
+  assert.ok(!inner.effectsState.children.some((e) => e.name === 'In Box'));
+});
+
+test('Add to Box and Matte only ever make the box longer; time-reversed layers count', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  title.outPoint = 8;
+  sub.outPoint = 8;
+  const box = create(host, comp, [title]);
+  box.outPoint = 15;
+  comp.select(box, sub);
+  host.api.addToBox();
+  assert.equal(box.outPoint, 15, 'Add kept it');
+  comp.select(box);
+  host.api.matteBoxes();
+  assert.equal(box.outPoint, 15, 'Matte kept it');
+  const host2 = createHost();
+  const s2 = scene(host2);
+  s2.title.outPoint = 3;
+  s2.sub.inPoint = 8;
+  s2.sub.outPoint = 1;
+  const box2 = create(host2, s2.comp, [s2.title, s2.sub]);
+  assert.deepEqual([box2.inPoint, box2.outPoint], [0, 8]);
+});
+
+test('locked layers: Apply, Release and Remove skip them and say so; converting unlocks and relocks', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub]);
+  box.locked = true;
+  comp.select(title);
+  host.api.applySettings(settings(host, { padding: 50 }));
+  assert.match(host.alerts.pop(), /Skipped \(locked\): AutoBox 1/);
+  host.confirmAnswer = true;
+  comp.select(box);
+  host.api.releaseBoxes();
+  assert.match(host.alerts.pop(), /Skipped \(locked\)/);
+  box.locked = false;
+  sub.locked = true;
+  comp.select(title, sub);
+  host.api.removeFromBox();
+  assert.equal(title.parent, null);
+  assert.equal(sub.parent, box);
+  assert.match(host.alerts.pop(), /Skipped \(locked\): Subtitle/);
+  assert.equal(host.undoDepth, 0);
+  // An old box with a locked layer converts, and stays locked.
+  const host2 = createHost();
+  const s2 = scene(host2);
+  const old = oldApi('AutoBox-2.0.1.jsx');
+  globalThis.AUTOBOX_TEST = {};
+  s2.comp.select(s2.title, s2.sub);
+  old.createBox(Object.assign({}, old.DEFAULTS));
+  const box2 = s2.comp._layers.find((l) => l.name.indexOf('AutoBox') === 0 && !/Stroke/.test(l.name));
+  s2.sub.locked = true;
+  box2.locked = false;
+  s2.comp.select(s2.title);
+  host2.confirmAnswer = true;
+  host2.api.applySettings(settings(host2));
+  assert.ok(!host2.alerts.some((a) => /went wrong/.test(a)), host2.alerts.join('|'));
+  assert.equal(s2.sub.locked, true);
+  assert.ok(host2.api.homeOf(box2.rectShapes()[0].children[0].expression), 'converted');
 });

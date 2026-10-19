@@ -51,7 +51,9 @@ Old boxes keep working as they are. To give one the 3.0 rig, select it and click
   widths and corner radius, and removes its Tint effect and its separate
   stroke layer. Scripts can't set gradient colors, so a gradient goes back to
   white and black: set it again with Edit Gradient;
-- keeps its padding, min size and anchor.
+- keeps its padding, min size and anchor. Keyframes on its old look controls
+  carry over, hold keys and easing included (a keyframed gradient angle doesn't:
+  AutoBox says so).
 
 The first click only converts. Click **Apply to Box** again to apply the panel's
 settings. Boxes from AutoBox 1.0 can also track layers that are parented to
@@ -88,26 +90,38 @@ and the box):
   it ends up (beyond the padding), or it fades or scales in, or a text animator
   reveals it. The box morphs to fit it, measured where the move ends, on the
   curve of that move. Ease, overshoot and bounce carry over, but overshoot never
-  makes the box cut a layer.
-- A move that **takes it clear away** (or fades or scales it out) takes it out. The
-  box keeps that space until the next layer comes in, then morphs to fit the
-  layers that are in. In a text swap, the box goes from the old line's size to
-  the new one's on the new line's curve. If a layer leaves while another is still
-  coming in, that morph refits without it.
+  makes the box cut a layer. A move still going when the layer has faded in, or
+  a second leg straight after (a path through a middle keyframe), is the rest of
+  its way in, unless it heads back out.
+- A move that **takes it clear away** (or fades or scales it out) takes it out,
+  and so does its out point. The box keeps that space until the next layer comes
+  in, then morphs to fit the layers that are in. In a text swap, the box goes from
+  the old line's size to the new one's on the new line's curve. If a layer leaves
+  while another is still coming in (on its curve, or within Morph Time of
+  appearing), that morph refits without it.
 - **Smaller moves** (a nudge, a pulse, a slow drift) and **Source Text changes**
-  reposition it: the box follows.
+  reposition it: the box follows. Lots of little keyframed moves (more than
+  eight, like a hand-keyed wiggle) make it hold one shape that covers them all.
 - Each layer's part of the box moves on **its own curve**, so staggered layers
-  blend smoothly, whatever their order in the timeline.
+  blend smoothly. Layers that come in together give the same box whatever their
+  order in the timeline, and a layer that has landed is never cut while a slower
+  one is still on its way.
+- **Text animators.** One that hides the characters it selects (Opacity or Scale
+  at 0, like the Typewriter preset) tells AutoBox how much of the line shows:
+  typing on brings the line in, from the start of the line, and erasing takes it
+  out. With other animators, a reveal brings the line in and running it back
+  takes it out.
 - A layer **without keyframes** is in from its in point. If it appears after the
   box starts, the box gets ready for it over **Morph Time** with **Morph Ease**,
   and is there when it appears. Its out point takes it out. Text changes work the
-  same way.
+  same way. A layer trimmed past its keyframes appears where they left it.
 - A layer that's **on screen from the first frame** and only moves away is in from
   the start. When a layer sits still and then makes one big move, AutoBox checks
-  which of its two places matches where the layers were when you made the box, so
+  which of its two places matches where that layer was when you made the box, so
   **make the box while your layers are in place**.
-- A layer moved by **expressions** (a wiggle, a counter, a rig), or by **dense
-  keyframes** such as tracking data, is followed frame by frame.
+- A layer moved by **expressions** (a wiggle, a counter, a rig, an expression on
+  top of keyframes), or by **dense keyframes** such as tracking data, is followed
+  frame by frame.
 - **Grow From** sets how the box first appears: **Motion** grows it from the side
   the first layer comes from (a layer rising from below grows the box up from its
   bottom edge; a layer scaling in grows it from that layer's anchor; a fade finds
@@ -119,24 +133,29 @@ When the automatic reading gets a layer wrong, select it and click **In Box**.
 The layer gets an **In Box** menu set to **Auto**. Keyframe it to **In** or **Out** to say
 yourself when the layer counts: switching to In just before or during a move
 borrows that move's curve, and without a move the box gets ready over Morph Time.
-**Skip** leaves the layer out but keeps the layers parented to it; nulls,
-adjustment layers and guide layers in a box are set to Skip automatically. A
-layer parented to another layer in the box is only in while its parent is.
+**Skip** leaves the layer out but keeps the layers parented to it (keyframed to
+Skip at some point, it never decides for them); nulls, adjustment layers and
+guide layers in a box are set to Skip automatically. A layer parented to another
+layer in the box is only in while its parent is. In Box is for layers, not
+boxes: for a box nested in another, give its layers the menu.
 
 **Freeze** (on the box's Effect Controls) holds the box while it's on, then eases
-back over Morph Time. On with no keyframes, it locks the box at its final shape.
+back over Morph Time. On with no keyframes, it locks the box at its shape on its
+last frame.
 Turn **Smart Animate** off to have the box wrap its layers on every frame instead.
 
 ### Using the box as a track matte
 
 Select a box (or one of its layers) and click **Matte**. Every layer in the box
 uses it as its Alpha track matte, so they only show inside the box, and the box
-stays visible as their background (and lasts as long as they do). Click again to
-take the mattes off. This needs After Effects 2023 or newer, where any layer can be
-a track matte.
+stays visible as their background (made longer if it has to be, to last as long
+as they do). Click again to take the mattes off, from layers that have since
+left the box too. With several boxes selected, one click turns them all on, or
+all off. Remove takes the box off as the matte of a layer it takes out. This
+needs After Effects 2023 or newer, where any layer can be a track matte.
 
 The matte is the box as it renders: if the box is see-through (Opacity or Fill
-Opacity below 100%, a gradient that fades out) or has effects such as a drop
+Opacity below 100%, a gradient with see-through color stops) or has effects such as a drop
 shadow, its layers fade or show along with it. Matte points this out. For a
 see-through or shadowed box, duplicate it, keep the copy fully opaque with no
 effects, and use the copy as the matte.
@@ -195,7 +214,8 @@ the selected box or boxes, leaving anything you've keyframed alone.
 Other buttons:
 
 - **Add to Box**: select a box and some other layers to add those layers to it.
-- **Remove**: takes the selected layers out of their box. They stay where they are.
+- **Remove**: takes the selected layers out of their box. They stay where they
+  are, and stay in whatever the box is in (an outer box, a controller null).
 - **Select Members**: selects every layer in the selected box.
 - **Matte** and **In Box**: see above.
 - **Release**: bakes the box's size into plain keyframes and removes AutoBox's
@@ -207,7 +227,12 @@ Other buttons:
   where it is. It comes and goes with its parent, and can have its own entrance.
 - **Nested boxes.** A box inside a box counts through its layers, grown by its
   padding and stroke, so both boxes move on the same curves. The outer box doesn't
-  see the inner box's Min Width/Height or Freeze.
+  see the inner box's Min Width/Height or Freeze, and counts its stroke width even
+  when you switch the stroke off by its eyeball (set the width to 0 instead).
+  A released box counts as a plain layer.
+- **Locked layers** are left alone: Apply, Remove, Release and Matte skip them
+  and say so. Converting an old box unlocks it and its layers for the moment and
+  locks them again.
 - **Cameras and lights** parented to a box are ignored. **Nulls**, adjustment and
   guide layers get In Box set to Skip when you Create, Add to or Apply to the box;
   one you parent to a box by hand later needs Apply to Box (or In Box › Skip).
