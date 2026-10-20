@@ -768,8 +768,18 @@ class TextLayer extends AVLayer {
     const start = prop('Start', 'ADBE Text Percent Start', 0);
     const end = prop('End', 'ADBE Text Percent End', 100);
     const offset = prop('Offset', 'ADBE Text Percent Offset', 0);
+    // o.shape (1 Square, 2 Ramp Up, ...) / o.mode (1 Add, 2 Subtract, ...): the selector's Advanced settings.
+    const sel = [start, end, offset];
+    if (o.shape !== undefined || o.mode !== undefined) {
+      sel.push(group('Advanced', 'ADBE Text Range Advanced', [
+        prop('Units', 'ADBE Text Range Units', 1),
+        prop('Mode', 'ADBE Text Selector Mode', o.mode || 1),
+        prop('Amount', 'ADBE Text Selector Max Amount', 100),
+        prop('Shape', 'ADBE Text Range Shape', o.shape || 1),
+      ]));
+    }
     animators.add(group(`Animator ${n}`, 'ADBE Text Animator', [
-      group('Selectors', 'ADBE Text Selectors', [group('Range Selector 1', 'ADBE Text Selector', [start, end, offset])]),
+      group('Selectors', 'ADBE Text Selectors', [group('Range Selector 1', 'ADBE Text Selector', sel)]),
       group('Properties', 'ADBE Text Animator Properties',
         o.opacity === undefined ? [] : [prop('Opacity', 'ADBE Text Opacity', o.opacity)]),
     ]));

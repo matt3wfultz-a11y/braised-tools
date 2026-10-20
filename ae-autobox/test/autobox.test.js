@@ -1761,3 +1761,65 @@ test('Release of an old box with a locked layer, Matte with a locked layer, Remo
   assert.equal(b.parent, ctrl);
   near(a.compBounds(2).l, 600, 'still follows its controller');
 });
+
+test('a Ramp Up cascade fade (Offset -100 to 100) comes in on its curve; with Smart Animate off, the box follows what shows', () => {
+  for (const smart of [1, 0]) {
+    const host = createHost();
+    const { comp, L } = textComp(host, [['Title', 400, 300, 400, 60], ['Subtitle', 400, 380, 300, 36]], 6);
+    const box = create(host, comp, [L.Title, L.Subtitle], { padding: 10, anchor: 1, smartAnimate: smart });
+    const sel = L.Subtitle.addAnimator({ opacity: 0, shape: 2 });
+    keys(sel.offset, [[1.5, -100, smooth], [2.5, 100]]);
+    near(rect(box, 1).h, 80, `${smart ? 'on' : 'off'}: not shown yet`);
+    near(rect(box, 3).h, 160, `${smart ? 'on' : 'off'}: in`);
+    if (smart) {
+      near(rect(box, 2).h, 80 + 80 * 0.5, 'on the cascade\'s curve');
+      near(jumps(box, 0, 4), 0);
+    }
+  }
+});
+
+test('letters rising in through an animator are a reveal, not an expression', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Title', 400, 300, 400, 60], ['Subtitle', 400, 380, 300, 36]], 6);
+  const box = create(host, comp, [L.Title, L.Subtitle], { padding: 10, anchor: 1 });
+  const sel = L.Subtitle.addAnimator({ opacity: 0 });
+  keys(sel.start, [[1.5, 0], [2.5, 100]]);
+  // In After Effects the bounds include letters an animator has moved: here
+  // they wait 80px below until the selector reaches them.
+  const startAt = (t) => new Prop(sel.start).valueAtTime(t, false);
+  L.Subtitle.rect = (t) => {
+    const down = Math.max(0, Math.min(1, (100 - startAt(t)) / 100));
+    if (down >= 1) return { left: 0, top: 50, width: 300, height: 36 };
+    if (down <= 0) return { left: 0, top: -30, width: 300, height: 36 };
+    return { left: 0, top: -30, width: 300, height: 116 };
+  };
+  near(rect(box, 1).h, 80, 'nothing shown yet');
+  near(rect(box, 4).h, 156);
+  near(jumps(box, 0, 5), 0);
+});
+
+test('renamed layers, with a layer added above, keep their homes', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 8 });
+  const lines = [];
+  for (let i = 4; i >= 0; i--) lines.unshift(comp.layers.addText(`Line ${i}`, { position: [700, 300 + i * 70], rect: { left: 0, top: -40, width: 360, height: 44 } }));
+  const box = create(host, comp, lines, { padding: 16, anchor: 1 });
+  lines.forEach((l, i) => slide(l, [[0.2 + i * 0.4, 0, 60, smooth], [0.6 + i * 0.4, 0, 0]]));
+  lines.forEach((l, i) => { l.name = `Item ${i}`; });
+  comp.layers.addSolid('Logo', { position: [100, 100], rect: { left: 0, top: 0, width: 50, height: 50 } });
+  lines.forEach((l, i) => near(cut(box, l, 5), 0, `line ${i}`));
+});
+
+test('Release says which locked layers keep their In Box menu', () => {
+  const host = createHost();
+  const { comp, title, sub } = scene(host);
+  const box = create(host, comp, [title, sub]);
+  comp.select(title, sub);
+  host.api.addInBoxToggles();
+  sub.locked = true;
+  comp.select(box);
+  host.confirmAnswer = true;
+  host.api.releaseBoxes();
+  assert.ok(host.alerts.some((a) => /Skipped \(locked\): Subtitle/.test(a)));
+  assert.ok(!title.effectsState.children.some((e) => e.name === 'In Box'));
+});

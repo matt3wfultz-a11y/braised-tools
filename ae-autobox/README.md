@@ -107,10 +107,11 @@ and the box):
   order in the timeline, and a layer that has landed is never cut while a slower
   one is still on its way.
 - **Text animators.** One that hides the characters it selects (Opacity or Scale
-  at 0, like the Typewriter preset) tells AutoBox how much of the line shows:
-  typing on brings the line in, from the start of the line, and erasing takes it
-  out. With other animators, a reveal brings the line in and running it back
-  takes it out.
+  at 0, like the Typewriter preset, or keyed down to 0) tells AutoBox how much
+  of the line shows, Range Selector Shape included (a Ramp Up cascade): typing
+  on brings the line in, from the start of the line, and erasing takes it out.
+  With other animators, or selectors set to a Mode other than Add, a reveal
+  brings the line in and running it back takes it out.
 - A layer **without keyframes** is in from its in point. If it appears after the
   box starts, the box gets ready for it over **Morph Time** with **Morph Ease**,
   and is there when it appears. Its out point takes it out. Text changes work the
@@ -118,7 +119,9 @@ and the box):
 - A layer that's **on screen from the first frame** and only moves away is in from
   the start. When a layer sits still and then makes one big move, AutoBox checks
   which of its two places matches where that layer was when you made the box, so
-  **make the box while your layers are in place**.
+  **make the box while your layers are in place**. Layers that weren't showing
+  then don't count, and a layer landing right where another one was reads as a
+  swap, so for a swap either line in place will do.
 - A layer moved by **expressions** (a wiggle, a counter, a rig, an expression on
   top of keyframes), or by **dense keyframes** such as tracking data, is followed
   frame by frame.
@@ -151,8 +154,9 @@ uses it as its Alpha track matte, so they only show inside the box, and the box
 stays visible as their background (made longer if it has to be, to last as long
 as they do). Click again to take the mattes off, from layers that have since
 left the box too. With several boxes selected, one click turns them all on, or
-all off. Remove takes the box off as the matte of a layer it takes out. This
-needs After Effects 2023 or newer, where any layer can be a track matte.
+all off. Remove, Add to Box and Create Box take a box off as the matte of a
+layer they move out of it. This needs After Effects 2023 or newer, where any
+layer can be a track matte.
 
 The matte is the box as it renders: if the box is see-through (Opacity or Fill
 Opacity below 100%, a gradient with see-through color stops) or has effects such as a drop
@@ -215,7 +219,8 @@ Other buttons:
 
 - **Add to Box**: select a box and some other layers to add those layers to it.
 - **Remove**: takes the selected layers out of their box. They stay where they
-  are, and stay in whatever the box is in (an outer box, a controller null).
+  are, and stay in whatever the box is in (an outer box, a controller null). A
+  controller null removed along with its layers keeps them.
 - **Select Members**: selects every layer in the selected box.
 - **Matte** and **In Box**: see above.
 - **Release**: bakes the box's size into plain keyframes and removes AutoBox's
@@ -231,8 +236,8 @@ Other buttons:
   when you switch the stroke off by its eyeball (set the width to 0 instead).
   A released box counts as a plain layer.
 - **Locked layers** are left alone: Apply, Remove, Release and Matte skip them
-  and say so. Converting an old box unlocks it and its layers for the moment and
-  locks them again.
+  and say so. Converting or releasing an old box unlocks its layers for the
+  moment and locks them again.
 - **Cameras and lights** parented to a box are ignored. **Nulls**, adjustment and
   guide layers get In Box set to Skip when you Create, Add to or Apply to the box;
   one you parent to a box by hand later needs Apply to Box (or In Box › Skip).

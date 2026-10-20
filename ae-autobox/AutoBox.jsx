@@ -198,10 +198,17 @@
         '      try { op = P("ADBE Text Opacity"); if (!low(op, false)) op = null; } catch (err) { op = null; }',
         '      try { sc = P("ADBE Text Scale 3D"); if (!low(sc, true)) sc = null; } catch (err2) { sc = null; }',
         '      if (!op && !sc) continue;',
-        '      var S = A(i)("ADBE Text Selectors");',
+        // Range Selectors that add to the selection; any other Mode, and what
+        // shows can't be told this way (then a reveal is read as coming in).
+        '      var S = A(i)("ADBE Text Selectors"), sel = [], plain = true;',
         '      for (j = 1; j <= S.numProperties; j++) {',
-        '        try { S(j)("ADBE Text Percent Start"); out.push({ S: S(j), op: op, sc: sc }); } catch (err3) {}',
+        '        var adv = null, mode = 1;',
+        '        try { S(j)("ADBE Text Percent Start"); } catch (err3) { continue; }',
+        '        try { adv = S(j)("ADBE Text Range Advanced"); mode = Math.round(adv("ADBE Text Selector Mode").valueAtTime(AB_IN)); } catch (err5) {}',
+        '        if (mode != 1) plain = false;',
+        '        sel.push({ S: S(j), adv: adv, op: op, sc: sc });',
         '      }',
+        '      if (plain) out = out.concat(sel);',
         '    }',
         '  } catch (err4) {}',
         '  return out.length ? out : null;',
@@ -220,26 +227,44 @@
         '      }',
         '    } catch (err5) {}',
         '    try {',
-        '      var adv = null, units = 1, amt = 100;',
-        '      try { adv = S("ADBE Text Range Advanced"); units = Math.round(adv("ADBE Text Range Units").valueAtTime(t)); } catch (err) {}',
+        '      var adv = H.adv, units = 1, amt = 100, shape = 1, a, b;',
+        '      try { units = Math.round(adv("ADBE Text Range Units").valueAtTime(t)); } catch (err) {}',
         '      try { amt = adv("ADBE Text Selector Max Amount").valueAtTime(t); } catch (err2) {}',
+        '      try { shape = Math.round(adv("ADBE Text Range Shape").valueAtTime(t)); } catch (err6) {}',
+        // The selected range, in percent of the line.
         '      if (units == 2) {',
         '        var len = Math.max(1, String(m.L.text.sourceText.valueAtTime(t)).length);',
         '        var io = S("ADBE Text Index Offset").valueAtTime(t);',
-        '        var ia = Math.max(0, Math.min(len, S("ADBE Text Index Start").valueAtTime(t) + io));',
-        '        var ib = Math.max(0, Math.min(len, S("ADBE Text Index End").valueAtTime(t) + io));',
-        '        f = Math.abs(ib - ia) / len;',
+        '        a = (S("ADBE Text Index Start").valueAtTime(t) + io) / len * 100;',
+        '        b = (S("ADBE Text Index End").valueAtTime(t) + io) / len * 100;',
         '      } else {',
         '        var o = S("ADBE Text Percent Offset").valueAtTime(t);',
-        '        var a = Math.max(0, Math.min(100, S("ADBE Text Percent Start").valueAtTime(t) + o));',
-        '        var b = Math.max(0, Math.min(100, S("ADBE Text Percent End").valueAtTime(t) + o));',
-        '        f = Math.abs(b - a) / 100;',
+        '        a = S("ADBE Text Percent Start").valueAtTime(t) + o;',
+        '        b = S("ADBE Text Percent End").valueAtTime(t) + o;',
         '      }',
-        '      f *= Math.max(0, Math.min(100, amt)) / 100 * how;',
+        '      f = ab_selected(shape, Math.min(a, b), Math.max(a, b)) * Math.max(0, Math.min(100, amt)) / 100 * how;',
         '    } catch (err3) { f = 0; }',
         '    hidden = Math.max(hidden, f);',
         '  }',
         '  return 1 - hidden;',
+        '}',
+        // How much of a line a Range Selector selects, 0..1, from its Shape (1
+        // Square, 2 Ramp Up, 3 Ramp Down, 4 Triangle, 5 Round, 6 Smooth) over the
+        // range lo..hi (percent, may run past either end).
+        'function ab_selected(shape, lo, hi) {',
+        '  if (shape == 1 || shape < 1 || shape > 6) return (Math.max(0, Math.min(100, hi)) - Math.max(0, Math.min(100, lo))) / 100;',
+        '  var sum = 0, n = 50;',
+        '  for (var k = 0; k < n; k++) {',
+        '    var x = (k + 0.5) * 100 / n, u = hi > lo ? (x - lo) / (hi - lo) : (x < lo ? -1 : 2), v;',
+        '    if (shape == 2) v = Math.max(0, Math.min(1, u));',
+        '    else if (shape == 3) v = Math.max(0, Math.min(1, 1 - u));',
+        '    else if (u < 0 || u >= 1) v = 0;',
+        '    else if (shape == 4) v = 1 - Math.abs(2 * u - 1);',
+        '    else if (shape == 5) v = Math.sqrt(1 - (2 * u - 1) * (2 * u - 1));',
+        '    else v = 0.5 - 0.5 * Math.cos(2 * Math.PI * u);',
+        '    sum += v;',
+        '  }',
+        '  return sum / n;',
         '}',
         // L and its parents below the box. A box nested in this one doesn't hide its
         // layers: they count here too, grown by its padding (see ab_geom).
@@ -599,7 +624,14 @@
         '  for (i = 0; i < named.length; i++) if (named[i][4] == m.L.index) return named[i];',
         '  var list = named.length ? named : AB_HOME;',
         '  for (i = 0; i < list.length; i++) if (fits(list[i], gs) || fits(list[i], ge)) same.push(list[i]);',
-        '  return same.length == 1 ? same[0] : null;',
+        '  if (same.length < 2) return same.length ? same[0] : null;',
+        // Several of its size: the one it sits on in either pose, if clearly so.
+        '  var best = null, top = 0, next = 0;',
+        '  for (i = 0; i < same.length; i++) {',
+        '    var o = Math.max(ab_onHome(gs, same[i]), ab_onHome(ge, same[i]));',
+        '    if (o > top) { next = top; top = o; best = same[i]; } else if (o > next) next = o;',
+        '  }',
+        '  return top >= 0.5 && top - next >= 0.1 ? best : null;',
         '}',
         // Moving as it appears, it was on screen on its own home when the box was
         // made and moves off it: it was in, and is going.
@@ -826,12 +858,25 @@
         '    }',
         '  }',
         '  if (m.text) {',
+        // After the last Source Text key, and after the text animators' last
+        // keys (an animator that moves or scales letters changes the bounds).
         '    var st = -1e9;',
         '    try { st = last(m.L.text.sourceText); } catch (err2) {}',
+        '    try { st = Math.max(st, ab_lastKey(m.L("ADBE Text Properties")("ADBE Text Animators"), 5)); } catch (err3) {}',
         '    var rectAt = function (t) { var r = ab_rect(m, t); return [r.left, r.top, r.width, r.height]; };',
         '    if (moves(rectAt, st)) return true;',
         '  }',
         '  return false;',
+        '}',
+        // The time of the last keyframe in a property group, `depth` levels down.
+        'function ab_lastKey(G, depth) {',
+        '  var t = -1e9, n = 0, i;',
+        '  try { if (G.numKeys) t = G.key(G.numKeys).time; } catch (err) {}',
+        '  if (depth > 0) {',
+        '    try { n = G.numProperties; } catch (err2) { n = 0; }',
+        '    for (i = 1; i <= n; i++) t = Math.max(t, ab_lastKey(G(i), depth - 1));',
+        '  }',
+        '  return t;',
         '}',
         // Each member's final timeline. A member parented to another member is in
         // only while that one is, and moves with it.
@@ -2788,7 +2833,7 @@
         try {
             // Bake every box before removing any controls: a nested box's size
             // depends on its outer box and the other way round.
-            var old = [], toggles = [];
+            var old = [], toggles = [], kept = [];
             for (i = 0; i < boxes.length; i++) {
                 var box = boxes[i], parts = rigParts(box), range = layerTimeRange(comp, box);
                 old.push(isOldBox(box));
@@ -2828,11 +2873,13 @@
             }
             for (k = 0; k < toggles.length; k++) {
                 var toggle = findControl(toggles[k], IN_BOX);
-                if (toggle && !toggles[k].locked) toggle.remove();
+                if (toggle && toggles[k].locked) kept.push(toggles[k].name);
+                else if (toggle) toggle.remove();
             }
         } finally {
             app.endUndoGroup();
         }
+        if (kept.length) alert("Skipped (locked): " + kept.join(", ") + " — they keep their In Box menu.", SCRIPT_NAME);
     }
 
     function showHelp() {
