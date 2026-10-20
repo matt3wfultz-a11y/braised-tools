@@ -143,8 +143,10 @@
         'var AB_COLLAPSE = Math.round(ab_ctl("When Empty", 1)) == 2;',
         // Morph Time and Ease as they are when a morph starts.
         'function ab_mt(t) { return Math.max(0, ab_ctlAt("Morph Time", t, 0.4)); }',
+        'var AB_EZ = {};',
         'function ab_ease(f, t) {',
-        '  var e = Math.round(ab_ctlAt("Morph Ease", t, 4));',
+        '  var e = AB_EZ[t];',
+        '  if (e === undefined) e = AB_EZ[t] = Math.round(ab_ctlAt("Morph Ease", t, 4));',
         '  f = Math.max(0, Math.min(1, f));',
         '  if (e == 2) return f * f * f;',
         '  if (e == 3) return 1 - (1 - f) * (1 - f) * (1 - f);',
@@ -176,23 +178,29 @@
         '  for (i = 1; i <= ib.numKeys; i++) if (Math.round(ib.key(i).value) == 4) return true;',
         '  return false;',
         '}',
-        // Text animators that hide what they select (Opacity or Scale near 0): with
-        // these, how much of the text shows can be read off their Range Selectors.
+        // Text animators that hide what they select (Opacity or Scale near 0, at
+        // the start or at any of their keys): with these, how much of the text shows
+        // can be read off their Range Selectors and how much they hide.
         'function ab_hiders(L) {',
-        '  var out = [], i, j;',
+        '  var out = [], i, j, k;',
+        '  var low = function (P, scale) {',
+        '    var v = [P.valueAtTime(AB_IN)];',
+        '    for (k = 1; k <= P.numKeys; k++) v.push(P.key(k).value);',
+        '    for (k = 0; k < v.length; k++) {',
+        '      if (scale ? Math.abs(v[k][0]) < 1 || Math.abs(v[k][1]) < 1 : v[k] < 50) return true;',
+        '    }',
+        '    return false;',
+        '  };',
         '  try {',
         '    var A = L("ADBE Text Properties")("ADBE Text Animators");',
         '    for (i = 1; i <= A.numProperties; i++) {',
-        '      var P = A(i)("ADBE Text Animator Properties"), hides = false;',
-        '      try { if (P("ADBE Text Opacity").valueAtTime(AB_IN) < 50) hides = true; } catch (err) {}',
-        '      try {',
-        '        var sc = P("ADBE Text Scale 3D").valueAtTime(AB_IN);',
-        '        if (Math.abs(sc[0]) < 1 || Math.abs(sc[1]) < 1) hides = true;',
-        '      } catch (err2) {}',
-        '      if (!hides) continue;',
+        '      var P = A(i)("ADBE Text Animator Properties"), op = null, sc = null;',
+        '      try { op = P("ADBE Text Opacity"); if (!low(op, false)) op = null; } catch (err) { op = null; }',
+        '      try { sc = P("ADBE Text Scale 3D"); if (!low(sc, true)) sc = null; } catch (err2) { sc = null; }',
+        '      if (!op && !sc) continue;',
         '      var S = A(i)("ADBE Text Selectors");',
         '      for (j = 1; j <= S.numProperties; j++) {',
-        '        try { S(j)("ADBE Text Percent Start"); out.push(S(j)); } catch (err3) {}',
+        '        try { S(j)("ADBE Text Percent Start"); out.push({ S: S(j), op: op, sc: sc }); } catch (err3) {}',
         '      }',
         '    }',
         '  } catch (err4) {}',
@@ -202,7 +210,15 @@
         'function ab_textVis(m, t) {',
         '  var hidden = 0, i;',
         '  for (i = 0; i < m.hide.length; i++) {',
-        '    var S = m.hide[i], f = 0;',
+        '    var H = m.hide[i], S = H.S, f = 0, how = 0;',
+        // How much its animator hides what it selects, now.
+        '    try { if (H.op) how = Math.max(how, 1 - Math.max(0, Math.min(100, H.op.valueAtTime(t))) / 100); } catch (err4) {}',
+        '    try {',
+        '      if (H.sc) {',
+        '        var sv = H.sc.valueAtTime(t);',
+        '        how = Math.max(how, 1 - Math.max(0, Math.min(100, Math.min(Math.abs(sv[0]), Math.abs(sv[1])))) / 100);',
+        '      }',
+        '    } catch (err5) {}',
         '    try {',
         '      var adv = null, units = 1, amt = 100;',
         '      try { adv = S("ADBE Text Range Advanced"); units = Math.round(adv("ADBE Text Range Units").valueAtTime(t)); } catch (err) {}',
@@ -219,7 +235,7 @@
         '        var b = Math.max(0, Math.min(100, S("ADBE Text Percent End").valueAtTime(t) + o));',
         '        f = Math.abs(b - a) / 100;',
         '      }',
-        '      f *= Math.max(0, Math.min(100, amt)) / 100;',
+        '      f *= Math.max(0, Math.min(100, amt)) / 100 * how;',
         '    } catch (err3) { f = 0; }',
         '    hidden = Math.max(hidden, f);',
         '  }',
@@ -414,6 +430,9 @@
         '          }',
         '          try { ab_segs(S(j)("ADBE Text Range Advanced")("ADBE Text Selector Max Amount"), 4, segs); } catch (err7) {}',
         '        }',
+        // An animator's own Opacity or Scale keyed: a reveal too.
+        '        try { ab_segs(A(i)("ADBE Text Animator Properties")("ADBE Text Opacity"), 4, segs); } catch (err8) {}',
+        '        try { ab_segs(A(i)("ADBE Text Animator Properties")("ADBE Text Scale 3D"), 4, segs); } catch (err9) {}',
         '      }',
         '    } catch (err6) {}',
         '  }',
@@ -518,8 +537,8 @@
         '  for (i = 0; i < mv.length; i++) if (mv[i].e > m.lin + AB_HALF && ab_trans(m, mv[i])) tr.push(mv[i]);',
         '  if (!tr.length) return true;',
         '  var first = tr[0], d;',
-        // Moving as it appears: coming in, unless it's clearly going away.
-        '  if (first.s <= m.lin + AB_HALF) return ab_moreIn(m, ab_geom(m, first.s0), ab_geom(m, first.e), H) < 0;',
+        // Moving as it appears: coming in, unless it moves off its own home.
+        '  if (first.s <= m.lin + AB_HALF) return ab_leavesHome(m, ab_geom(m, first.s0), ab_geom(m, first.e));',
         '  if (!ab_shownAt(m, first.e)) return true;',
         // A reveal by an animator that doesn't hide what it selects: read as coming in.
         '  if (first.reveal && !m.hide) return false;',
@@ -550,8 +569,8 @@
         '    var own = ab_ownHome(m, gs, ge);',
         '    fs = ab_onHome(gs, own);',
         '    fe = ab_onHome(ge, own);',
-        '    if (fe - fs > 0.25) return 1;',
-        '    if (fs - fe > 0.25) return -1;',
+        '    if (fe - fs > 0.25) return own && ab_swap(ge, gs, own) ? -1 : 1;',
+        '    if (fs - fe > 0.25) return own && ab_swap(gs, ge, own) ? 1 : -1;',
         '  }',
         '  if (H) {',
         '    fs = ab_gap(gs, H);',
@@ -565,21 +584,46 @@
         '  if (fs - fe > 0.25) return -1;',
         '  return 0;',
         '}',
-        // The home written for this layer: the one with its layer index while it's
-        // still its size, else the only one of its size. null: go by all of them.
+        // The home written for this layer ([l, t, r, b, index, name]): the one with
+        // its name (its index tells apart layers of the same name), else the only
+        // one of its size (renamed, or a text layer whose text was edited). null:
+        // go by all of them. An index alone means nothing: layers move in the stack.
         'function ab_ownHome(m, gs, ge) {',
-        '  var same = [], i;',
+        '  var named = [], same = [], i, nm = m.L.name;',
         '  var fits = function (h, g) {',
         '    var w = g.r - g.l, ht = g.b - g.t;',
         '    return Math.abs(h[2] - h[0] - w) <= 2 + 0.02 * w && Math.abs(h[3] - h[1] - ht) <= 2 + 0.02 * ht;',
         '  };',
-        '  for (i = 0; i < AB_HOME.length; i++) {',
-        '    var h = AB_HOME[i];',
-        '    if (!fits(h, gs) && !fits(h, ge)) continue;',
-        '    if (h.length > 4 && h[4] == m.L.index) return h;',
-        '    same.push(h);',
-        '  }',
+        '  for (i = 0; i < AB_HOME.length; i++) if (AB_HOME[i].length > 5 && AB_HOME[i][5] === nm) named.push(AB_HOME[i]);',
+        '  if (named.length == 1) return named[0];',
+        '  for (i = 0; i < named.length; i++) if (named[i][4] == m.L.index) return named[i];',
+        '  var list = named.length ? named : AB_HOME;',
+        '  for (i = 0; i < list.length; i++) if (fits(list[i], gs) || fits(list[i], ge)) same.push(list[i]);',
         '  return same.length == 1 ? same[0] : null;',
+        '}',
+        // Moving as it appears, it was on screen on its own home when the box was
+        // made and moves off it: it was in, and is going.
+        'function ab_leavesHome(m, gs, ge) {',
+        '  if (!AB_HOME) return false;',
+        '  var own = ab_ownHome(m, gs, ge);',
+        '  if (!own || ab_inFrame({ l: own[0], t: own[1], r: own[2], b: own[3] }) < 0.5) return false;',
+        '  return ab_onHome(gs, own) >= 0.75 && ab_onHome(ge, own) <= 0.25 && !ab_swap(gs, ge, own);',
+        '}',
+        // The layer was at pose `was` when the box was made, but its other pose `to`
+        // is right where another layer was then, and `was` isn't: a swap, so `to`
+        // is the pose that's in (the box was made before or after the swap).
+        'function ab_swap(was, to, own) {',
+        '  var on = function (g) {',
+        '    var best = 0;',
+        '    for (var i = 0; i < AB_HOME.length; i++) {',
+        '      var h = AB_HOME[i];',
+        '      if (h === own) continue;',
+        '      var r = { l: h[0], t: h[1], r: h[2], b: h[3] };',
+        '      best = Math.max(best, ab_overlap(g, r) / Math.max(1e-9, Math.min(ab_area(g), ab_area(r))));',
+        '    }',
+        '    return best;',
+        '  };',
+        '  return on(to) >= 0.9 && on(was) < 0.9;',
         '}',
         // How much of a rect lies on its home (or, without one, where any of the
         // layers were when the box was made).
@@ -764,8 +808,8 @@
         '  var moves = function (get, t0) {',
         '    t0 = Math.max(m.lin, t0);',
         '    var v0 = get(t0);',
-        '    for (n = 1; n <= 4; n++) {',
-        '      var t1 = t0 + (end - t0) * n / 4;',
+        '    for (n = 0; n < 2; n++) {',
+        '      var t1 = t0 + (end - t0) * (n ? 0.93 : 0.41);',
         '      if (t1 > t0 + AB_HALF && ab_d2(v0, get(t1)) > 1e-6) return true;',
         '    }',
         '    return false;',
@@ -943,11 +987,11 @@
         '}',
         // Every change of the box, in order: morphs to fit who's in. A layer that
         // leaves keeps its space (held) until the next one comes in, unless a layer
-        // is still on its way in: then that morph refits without it. Entrances and
-        // moves that start together are one morph, led by the biggest move, so the
-        // timeline order of the layers doesn't matter.
+        // is still on its way in: then that morph refits without it. Morphs that
+        // start together are ordered by what they do (ab_leads), not by the layers'
+        // order in the timeline.
         'function ab_events(members) {',
-        '  var items = [], i, j, k;',
+        '  var items = [], i, j;',
         '  for (i = 0; i < members.length; i++) {',
         '    var M = members[i], tl = M.tl;',
         '    M.own = [];',
@@ -962,9 +1006,12 @@
         '    }',
         '    M.own.sort(function (x, y) { return x.s - y.s || x.seq - y.seq; });',
         '  }',
-        // Leaves first, then snaps, then the quicker morph; the layer order last.
+        // Leaves first, then snaps, then the quicker morph, then the one that leads.
         '  var rank = function (x) { return x.kind == 2 ? 0 : (x.snap ? 1 : 2); };',
-        '  items.sort(function (x, y) { return x.s - y.s || rank(x) - rank(y) || x.e - y.e || x.m.i - y.m.i || x.seq - y.seq; });',
+        '  items.sort(function (x, y) {',
+        '    return x.s - y.s || rank(x) - rank(y) || x.e - y.e ||',
+        '      (x.kind == 2 ? 0 : (ab_leads(x, y) ? -1 : (ab_leads(y, x) ? 1 : 0))) || x.seq - y.seq;',
+        '  });',
         '  var ins = [], held = [], E = [], empty = true;',
         '  var find = function (list, m) {',
         '    for (var n = 0; n < list.length; n++) if (list[n][0] === m) return n;',
@@ -1008,37 +1055,28 @@
         '      }',
         '      continue;',
         '    }',
-        '    var grp = [it];',
-        '    if (!it.snap) {',
-        '      while (i + 1 < items.length && items[i + 1].kind != 2 && !items[i + 1].snap && items[i + 1].s - it.s <= AB_HALF) grp.push(items[++i]);',
+        '    if (it.kind == 0) {',
+        '      if (at >= 0) ins.splice(at, 1);',
+        '      var h = find(held, it.m);',
+        '      if (h >= 0) held.splice(h, 1);',
+        '      held = [];',
+        '      ins.push([it.m, it.T, it.Ts]);',
+        '      it.set = snapshot(false);',
+        '      it.fresh = empty;',
+        '      empty = false;',
+        '    } else {',
+        '      if (at < 0) continue;',
+        '      ins[at] = [it.m, it.T, ins[at][2]];',
+        '      it.set = snapshot(true);',
         '    }',
-        '    var lead = null, entering = false;',
-        '    for (k = 0; k < grp.length; k++) {',
-        '      var g = grp[k], ga = find(ins, g.m);',
-        '      if (g.kind == 0) {',
-        '        entering = true;',
-        '        if (ga >= 0) ins.splice(ga, 1);',
-        '        var h = find(held, g.m);',
-        '        if (h >= 0) held.splice(h, 1);',
-        '        ins.push([g.m, g.T, g.Ts]);',
-        '      } else {',
-        '        if (ga < 0) continue;',
-        '        ins[ga] = [g.m, g.T, ins[ga][2]];',
-        '      }',
-        '      if (!lead || ab_leads(g, lead)) lead = g;',
-        '    }',
-        '    if (!lead) continue;',
-        '    if (entering) held = [];',
-        '    lead.set = snapshot(!entering);',
-        '    lead.fresh = entering && empty;',
-        '    if (entering) empty = false;',
-        '    E.push(lead);',
+        '    E.push(it);',
         '  }',
         '  return E;',
         '}',
-        // Which of two morphs that start together leads: a curve over a change with
-        // none, then the bigger move, the longer one, the bigger layer, the higher
-        // one, the one further left.
+        // Which of two morphs that start together goes first (and, into an empty
+        // box, decides where it grows from): a curve over a change with none, then
+        // the bigger move, the longer one, the bigger layer, the higher one, the one
+        // further left.
         'function ab_leads(a, b) {',
         '  if (a.inst != b.inst) return !a.inst;',
         '  var wa = ab_change(a), wb = ab_change(b);',
@@ -1087,12 +1125,13 @@
         // ever comes in.
         'function ab_smart(E, t) {',
         '  var r = ab_morphs(E, t);',
-        '  if (r.box) ab_cover(E, r.box, t, r.gate);',
+        '  if (r.box) ab_cover(E, r.box, t, r.gates);',
         '  return r.box;',
         '}',
-        // The morphs alone. gate: when the box last started growing from nothing.
+        // The morphs alone. gates: [s, start] of each time the box starts growing
+        // from nothing (nothing changes it before then).
         'function ab_morphs(E, t) {',
-        '  var box = null, prev = null, gate = -1e9, cl = null, i;',
+        '  var box = null, prev = null, gate = -1e9, gates = [], cl = null, i;',
         '  for (i = 0; i < E.length; i++) {',
         '    var ev = E[i], R;',
         '    if (ev.kind == 4) R = prev ? ab_origin(ev, prev, true) : null;',
@@ -1106,6 +1145,7 @@
         '      var grows = from.l != R.l || from.t != R.t || from.r != R.r || from.b != R.b;',
         '      var start = ev.s - (ev.inst && !ev.snap && grows ? ev.mt : 0);',
         '      gate = start;',
+        '      gates.push([ev.s, start]);',
         '      if (t < start) {',
         '        var o = ab_anchorPt(from);',
         '        if (!box) box = o;',
@@ -1128,40 +1168,60 @@
         '    if (ev.kind == 4) cl = { ev: ev, from: from, R: R };',
         '    prev = R;',
         '  }',
-        '  return { box: box, gate: gate };',
+        '  return { box: box, gates: gates };',
         '}',
+        // When a morph is done changing a growing edge.
+        'function ab_done(ev) { return ev.snap || ev.inst ? ev.s : ev.e; }',
         // Layers that are in are never cut. Morphs add up, so a layer that gets
         // there before a slower one still coming in would be short by what the
         // slower one has left to go: it makes that up over its own entrance or move,
-        // and once it's there the box fits it.
-        'function ab_cover(E, box, t, gate) {',
-        '  var cur = null, i, k;',
-        '  for (i = 0; i < E.length; i++) if (Math.max(gate, ab_start(E[i])) <= t) cur = E[i];',
+        // and once it's there the box fits it. A layer that had landed and moves
+        // again is kept in the box as it goes.
+        'function ab_cover(E, box, t, gates) {',
+        '  var cur = null, memo = {}, i, k;',
+        // The start of the growth an event belongs to: nothing of it shows before.
+        '  var gateOf = function (x) {',
+        '    var g = -1e9;',
+        '    for (var n = 0; n < gates.length; n++) if (gates[n][0] <= x + 1e-9) g = gates[n][1];',
+        '    return g;',
+        '  };',
+        '  var started = function (ev) { return Math.max(gateOf(ev.s), ab_start(ev)) <= t; };',
+        '  for (i = 0; i < E.length; i++) if (started(E[i])) cur = E[i];',
         '  if (!cur || !cur.set) return;',
         '  for (i = 0; i < cur.set.length; i++) {',
-        '    var m = cur.set[i][0], own = null, u = null;',
-        '    for (k = 0; k < m.own.length; k++) if (Math.max(gate, ab_start(m.own[k])) <= t) own = m.own[k];',
-        '    if (!own) continue;',
-        '    var p = Math.max(0, Math.min(1, ab_prog(own, t, true, gate)));',
-        '    if (p <= 0) continue;',
-        '    var Ts = cur.set[i][2] || [cur.set[i][1]];',
-        '    for (k = 0; k < Ts.length; k++) {',
-        '      var g = ab_geom(m, Ts[k] < 0 ? t : Ts[k]);',
-        '      if (g.r - g.l < 0.01 && g.b - g.t < 0.01) continue;',
-        '      u = u ? { l: Math.min(u.l, g.l), t: Math.min(u.t, g.t), r: Math.max(u.r, g.r), b: Math.max(u.b, g.b) } : g;',
+        '    var m = cur.set[i][0], own = null, before = null, u = null, c;',
+        '    for (k = 0; k < m.own.length; k++) {',
+        '      if (!started(m.own[k])) continue;',
+        '      before = own;',
+        '      own = m.own[k];',
         '    }',
-        '    if (!u) continue;',
-        '    u = ab_padded(u);',
-        '    var c = u, done = own.inst ? own.s : own.e;',
-        '    if (t < done) {',
+        '    if (!own) continue;',
+        '    var gate = gateOf(own.s), done = ab_done(own);',
+        '    if (own.kind == 1 && t < done && before && ab_done(before) <= own.s + AB_HALF) {',
+        '      c = ab_padded(ab_geom(m, t));',
+        '    } else {',
+        '      var p = Math.max(0, Math.min(1, ab_prog(own, t, true, gate)));',
+        '      if (p <= 0) continue;',
+        // Measured where this entrance or move takes it.
+        '      var Ts = own.Ts || [own.T];',
+        '      for (k = 0; k < Ts.length; k++) {',
+        '        var g = ab_geom(m, Ts[k] < 0 ? t : Ts[k]);',
+        '        if (g.r - g.l < 0.01 && g.b - g.t < 0.01) continue;',
+        '        u = u ? { l: Math.min(u.l, g.l), t: Math.min(u.t, g.t), r: Math.max(u.r, g.r), b: Math.max(u.b, g.b) } : g;',
+        '      }',
+        '      if (!u) continue;',
+        '      c = u = ab_padded(u);',
+        '      if (t < done) {',
         // Short by this much when it gets there: make it up as it goes (by
         // time: an overshooting curve gets to 1 before it's done).
-        '      var at = ab_morphs(E, done).box;',
-        '      if (!at) continue;',
-        '      c = {',
-        '        l: Math.max(u.l, box.l - Math.max(0, at.l - u.l) * p), t: Math.max(u.t, box.t - Math.max(0, at.t - u.t) * p),',
-        '        r: Math.min(u.r, box.r + Math.max(0, u.r - at.r) * p), b: Math.min(u.b, box.b + Math.max(0, u.b - at.b) * p)',
-        '      };',
+        '        if (memo[done] === undefined) memo[done] = ab_morphs(E, done).box;',
+        '        var at = memo[done];',
+        '        if (!at) continue;',
+        '        c = {',
+        '          l: Math.max(u.l, box.l - Math.max(0, at.l - u.l) * p), t: Math.max(u.t, box.t - Math.max(0, at.t - u.t) * p),',
+        '          r: Math.min(u.r, box.r + Math.max(0, u.r - at.r) * p), b: Math.min(u.b, box.b + Math.max(0, u.b - at.b) * p)',
+        '        };',
+        '      }',
         '    }',
         '    box.l = Math.min(box.l, c.l);',
         '    box.t = Math.min(box.t, c.t);',
@@ -1248,18 +1308,30 @@
     };
 
     // AB_HOME: where each layer was (in the box's space) when the box was
-    // made around it, as [l, t, r, b, layer index] rects. It settles whether
-    // a layer that sits still and then makes one big move is coming in or
-    // leaving.
+    // made around it, as [l, t, r, b, layer index, layer name]. It settles
+    // whether a layer that sits still and then makes one big move is coming
+    // in or leaving. The engine finds a layer's own home by its name.
     function homeLine(home) {
         if (!home || !home.length) return "var AB_HOME = null;";
         var r = function (v) { return Math.round(v * 100) / 100; }, parts = [];
         for (var i = 0; i < home.length; i++) {
-            var nums = [];
-            for (var k = 0; k < home[i].length; k++) nums.push(r(home[i][k]));
-            parts.push("[" + nums.join(", ") + "]");
+            var vals = [];
+            for (var k = 0; k < home[i].length; k++) vals.push(typeof home[i][k] == "string" ? quote(home[i][k]) : r(home[i][k]));
+            parts.push("[" + vals.join(", ") + "]");
         }
         return "var AB_HOME = [" + parts.join(", ") + "];";
+    }
+
+    // A string as an ES3 literal that stays on one line.
+    function quote(text) {
+        var out = '"';
+        for (var i = 0; i < text.length; i++) {
+            var c = text.charAt(i), code = text.charCodeAt(i);
+            if (c == '"' || c == "\\") out += "\\" + c;
+            else if (code < 32 || code == 0x2028 || code == 0x2029 || code > 126) out += "\\u" + ("000" + code.toString(16)).slice(-4);
+            else out += c;
+        }
+        return out + '"';
     }
 
     // kind: "size" | "position" (the box's rect).
@@ -1268,26 +1340,54 @@
             "var AB_BOX = thisLayer;\n" + homeLine(home) + "\n" + ENGINE + "\n" + TAILS[kind];
     }
 
-    var HOME_RE = /var AB_HOME = \[(.*)\];/;
+    var HOME_RE = /var AB_HOME = (\[.*\]);/;
 
-    // The layout a box was made around, as its expression says.
+    // The layout a box was made around, as its expression says: a list of
+    // [numbers..., "name"] entries (homeLine's output, read back).
     function homeOf(expression) {
-        var m = HOME_RE.exec(expression || ""), out = [], rect, re = /\[([^\[\]]*)\]/g;
+        var m = HOME_RE.exec(expression || ""), out = [], cur = null, s, i = 1, c;
         if (!m) return null;
-        while ((rect = re.exec(m[1])) !== null) {
-            var nums = rect[1].split(","), one = [];
-            for (var i = 0; i < nums.length; i++) one.push(parseFloat(nums[i]));
-            if (one.length >= 4) out.push(one);
+        s = m[1];
+        while (i < s.length - 1) {
+            c = s.charAt(i);
+            if (c == "[") cur = [];
+            else if (c == "]") {
+                if (cur && cur.length >= 4) out.push(cur);
+                cur = null;
+            } else if (c == '"' && cur) {
+                var text = "";
+                for (i++; i < s.length && s.charAt(i) != '"'; i++) {
+                    if (s.charAt(i) == "\\") {
+                        i++;
+                        if (s.charAt(i) == "u") {
+                            text += String.fromCharCode(parseInt(s.substr(i + 1, 4), 16));
+                            i += 4;
+                        } else text += s.charAt(i);
+                    } else text += s.charAt(i);
+                }
+                cur.push(text);
+            } else if (/[-0-9.]/.test(c) && cur) {
+                var j = i;
+                while (j < s.length && /[-0-9.eE+]/.test(s.charAt(j))) j++;
+                cur.push(parseFloat(s.substring(i, j)));
+                i = j - 1;
+            }
+            i++;
         }
         return out.length ? out : null;
     }
 
-    // Where each of `layers` is now, in the box's space, with its index.
+    // Where each of `layers` is now, in the box's space, with its index and
+    // name. A layer that isn't showing now (outside its in and out points,
+    // or transparent) has no home.
     function homesOf(comp, box, layers) {
-        var out = [];
+        var out = [], t = comp.time;
         for (var i = 0; i < layers.length; i++) {
-            var b = measure(comp, box, [layers[i]], box);
-            if (b.r > b.l) out.push([b.l, b.t, b.r, b.b, layers[i].index]);
+            var L = layers[i], shown = t >= Math.min(L.inPoint, L.outPoint) && t < Math.max(L.inPoint, L.outPoint);
+            try { if (L.property("ADBE Transform Group").property("ADBE Opacity").valueAtTime(t, false) <= 1) shown = false; } catch (err) {}
+            if (!shown) continue;
+            var b = measure(comp, box, [L], box);
+            if (b.r > b.l) out.push([b.l, b.t, b.r, b.b, L.index, L.name]);
         }
         return out;
     }
@@ -1955,14 +2055,24 @@
         }
     }
 
-    // Parent the top-level layers to the box (the rest ride along).
+    // Parent the top-level layers to the box (the rest ride along). A layer
+    // leaving another box takes that box off as its matte, and its riders'
+    // (not when the new box sits inside the old one: it's still in it).
     function adopt(comp, box, layers) {
-        var top = topLevel(layers), moving = [], i;
+        var top = topLevel(layers), moving = [], i, j;
         for (i = 0; i < top.length; i++) {
             if (!sameLayer(top[i].parent, box)) moving.push(top[i]);
         }
         for (i = 0; i < moving.length; i++) freeze(comp, moving[i]);
-        for (i = 0; i < moving.length; i++) moving[i].parent = box;
+        for (i = 0; i < moving.length; i++) {
+            var old = ownerBox(moving[i]);
+            if (old && !isAncestor(old, box)) {
+                for (j = 1; j <= comp.numLayers; j++) {
+                    if (isAncestor(moving[i], comp.layer(j))) unmatte(comp.layer(j), old);
+                }
+            }
+            moving[i].parent = box;
+        }
     }
 
     // Comp-space bounds of `layers` at the current time, via a temporary
@@ -2364,11 +2474,20 @@
         app.beginUndoGroup("AutoBox: Add to Box");
         try {
             var converted = answers[0] ? convertBox(comp, box, answers[0].adoptOutside) : null;
-            var home = (homeOf(rigParts(box).size.expression) || []).concat(homesOf(comp, box, added));
+            var old = homeOf(rigParts(box).size.expression) || [], home = [];
             adopt(comp, box, added);
             var members = directMembers(comp, box);
             var lowest = lowestLayer(members.concat(added));
             if (lowest.index > box.index) box.moveAfter(lowest);
+            // Homes once the stack is settled; a layer added again gets a new one.
+            for (i = 0; i < old.length; i++) {
+                var again = false;
+                for (var k = 0; k < added.length; k++) {
+                    if (old[i].length > 5 && old[i][5] === added[k].name) again = true;
+                }
+                if (!again) home.push(old[i]);
+            }
+            home = home.concat(homesOf(comp, box, added));
             fitTiming(box, members.concat(added), true);
             rigBox(box, home);
             skipCarriers(comp, box);
@@ -2408,13 +2527,21 @@
             // something else (a controller null): keep that link. Out of its
             // box, a layer keeps whatever the box was in (an outer box, a
             // controller null), and stays where it is.
+            var dest = [];
+            for (i = 0; i < picked.length; i++) dest.push(owners[i] ? owners[i].parent : null);
             for (i = 0; i < picked.length; i++) {
                 if (!owners[i]) continue;
+                // Leaving with a picked parent (a controller null): it stays on it.
+                var carried = false;
+                for (var up = picked[i].parent; up && !sameLayer(up, owners[i]); up = up.parent) {
+                    if (containsLayer(picked, up)) carried = true;
+                }
+                if (carried) continue;
                 var riders = [];
                 for (j = 1; j <= comp.numLayers; j++) {
                     if (isAncestor(picked[i], comp.layer(j))) riders.push(comp.layer(j));
                 }
-                picked[i].parent = owners[i].parent;
+                picked[i].parent = dest[i];
                 // Its box can't be its matte any more.
                 for (j = 0; j < riders.length; j++) unmatte(riders[j], owners[i]);
             }
@@ -2490,7 +2617,7 @@
     function matteBoxes() {
         var comp = activeComp();
         if (!comp) return;
-        var boxes = selectedBoxes(comp), plans = [], off = true, i, j;
+        var boxes = selectedBoxes(comp), plans = [], off = true, locked = [], i, j;
         if (!boxes.length) return;
         boxes = skipLocked(boxes);
         if (!boxes.length) return;
@@ -2502,7 +2629,11 @@
             var members = boxMembers(comp, boxes[i]), layers = [], all = true;
             for (j = 0; j < members.length; j++) {
                 var m = members[j];
-                if (!(m instanceof AVLayer) || !m.hasVideo || m.locked || m.nullLayer || m.adjustmentLayer || m.guideLayer) continue;
+                if (!(m instanceof AVLayer) || !m.hasVideo || m.nullLayer || m.adjustmentLayer || m.guideLayer) continue;
+                if (m.locked) {
+                    locked.push(m.name);
+                    continue;
+                }
                 if (typeof members[j].setTrackMatte !== "function") {
                     alert("Using any layer as a track matte needs After Effects 2023 (23.0) or newer.\n\n" +
                         "In older versions, duplicate the box, put the copy right above a layer and pick Alpha Matte " +
@@ -2554,6 +2685,7 @@
         } finally {
             app.endUndoGroup();
         }
+        if (locked.length) alert("Skipped (locked): " + locked.join(", ") + "\n\nUnlock a layer to change its matte.", SCRIPT_NAME);
         if (notes.length) {
             alert("Its layers now show only inside the box. Note that the box's own transparency and effects " +
                 "shape the matte too:\n\n" + notes.join("\n") + "\n\nFor a see-through or shadowed box, duplicate it, " +
@@ -2668,7 +2800,9 @@
                     for (j = 0; j < legacy.length; j++) {
                         if (!containsLayer(members, legacy[j])) members.push(legacy[j]);
                     }
-                    for (j = 0; j < members.length; j++) releaseMember(comp, members[j]);
+                    unlocked(members, function () {
+                        for (var n = 0; n < members.length; n++) releaseMember(comp, members[n]);
+                    });
                     bakeProperty(comp, parts.roundness, range);
                 }
                 bakeProperty(comp, parts.size, range);

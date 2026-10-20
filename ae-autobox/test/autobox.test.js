@@ -1573,3 +1573,191 @@ test('locked layers: Apply, Release and Remove skip them and say so; converting 
   assert.equal(s2.sub.locked, true);
   assert.ok(host2.api.homeOf(box2.rectShapes()[0].children[0].expression), 'converted');
 });
+
+// ---------------------------------------------------------------------------
+// Second review round
+// ---------------------------------------------------------------------------
+test('a swap gives the same box whenever you make it: before animating, or after with the playhead on either line', () => {
+  for (const [createAt, keysFirst] of [[1, false], [1, true], [3, true]]) {
+    const host = createHost();
+    const comp = host.newComp({ duration: 6 });
+    const B = comp.layers.addText('B', { position: [700, 500], rect: { left: 0, top: -40, width: 700, height: 48 }, inPoint: 2 });
+    const A = comp.layers.addText('A', { position: [700, 500], rect: { left: 0, top: -40, width: 300, height: 48 } });
+    const anim = () => {
+      slide(A, [[2, 0, 0, smooth], [2.5, 0, -120]]);
+      slide(B, [[2, 0, 120, smooth], [2.5, 0, 0]]);
+    };
+    if (keysFirst) anim();
+    comp.time = createAt;
+    const box = create(host, comp, [A, B], { padding: 12, anchor: 1 });
+    if (!keysFirst) anim();
+    const tag = `made at ${createAt}${keysFirst ? ' after animating' : ''}`;
+    near(cut(box, A, 1), 0, `${tag}: A in before the swap`);
+    near(rect(box, 1).w, 324, `${tag}: A's size`);
+    for (const t of [3, 5]) near(cut(box, B, t), 0, `${tag}: B in after (${t})`);
+  }
+});
+
+test('adding a layer above, or reordering, doesn\'t change a box (homes go by name)', () => {
+  const build = () => {
+    const host = createHost();
+    const comp = host.newComp({ duration: 8 });
+    const rows = [];
+    for (let i = 3; i >= 0; i--) rows.unshift(comp.layers.addShapeMember(`Row ${i}`, { position: [700, 300 + i * 70], rect: { left: -200, top: -22, width: 400, height: 44 } }));
+    const box = create(host, comp, rows, { padding: 12, anchor: 1 });
+    rows.forEach((l, i) => slide(l, [[0.5 + i * 0.5, 0, 60, smooth], [0.9 + i * 0.5, 0, 0]]));
+    return { host, comp, rows, box };
+  };
+  const check = (s, tag) => s.rows.forEach((r, i) => {
+    for (const t of [0.91 + i * 0.5, 3, 5]) near(cut(s.box, r, t), 0, `${tag}: row ${i} at ${t}`);
+  });
+  let s = build();
+  check(s, 'as made');
+  s.comp.layers.addSolid('Logo', { position: [100, 100], rect: { left: 0, top: 0, width: 50, height: 50 } });
+  check(s, 'a layer added on top');
+  s = build();
+  s.rows[3].moveToBeginning();
+  check(s, 'reordered');
+  // Box another layer above the list: the list's box doesn't change.
+  s = build();
+  const head = s.comp.layers.addText('Heading', { position: [700, 150], rect: { left: 0, top: -40, width: 300, height: 44 } });
+  create(s.host, s.comp, [head]);
+  check(s, 'another box made above');
+});
+
+test('homes keep layer names with quotes, backslashes and accents, as plain ES3', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 4 });
+  const odd = comp.layers.addText('Odd', { position: [200, 300], rect: { left: 0, top: -40, width: 300, height: 44 } });
+  odd.name = 'Say "hi" \\ café, [1] 💬';
+  const box = create(host, comp, [odd]);
+  const expr = box.rectShapes()[0].children[0].expression;
+  acorn.parse(expr, { ecmaVersion: 3, allowReserved: false });
+  const home = host.api.homeOf(expr);
+  assert.equal(home.length, 1);
+  assert.equal(home[0][5], odd.name);
+  near(cut(box, odd, 1), 0);
+});
+
+test('a layer popping in on the frame another starts sliding: the box still gets ready over Morph Time', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Kicker', 200, 300, 200, 44], ['Title', 200, 380, 520, 44], ['Label', 200, 460, 300, 44, { inPoint: 1 }]]);
+  const box = create(host, comp, [L.Kicker, L.Title, L.Label], { padding: 10, anchor: 1, morphTime: 0.4 });
+  slide(L.Title, [[1, -900, 0, smooth], [1.6, 0, 0]]);
+  near(jumps(box, 0.3, 2), 0, 'no jumps');
+  assert.ok(maxStep(box, 0.3, 2) < 90, 'no big steps');
+  near(cut(box, L.Label, 1), 0, 'ready when it appears');
+});
+
+test('a layer leaving while a slower one that started with another is still coming in refits the box', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Old', 200, 300, 600, 44], ['Name', 200, 540, 360, 44, { inPoint: 2 }], ['Role', 200, 620, 420, 44, { inPoint: 2 }]], 8);
+  const box = create(host, comp, [L.Old, L.Name, L.Role], { padding: 10, anchor: 1 });
+  slide(L.Name, [[2, -1400, 0, smooth], [2.4, 0, 0]]);
+  slide(L.Role, [[2, 0, 300, smooth], [4, 0, 0]]);
+  keys(L.Old.tprop('ADBE Opacity'), [[3, 100], [3.3, 0]]);
+  near([rect(box, 4.5).w, rect(box, 4.5).h], [440, 144], 'fits Name and Role');
+  for (const t of [4, 6]) near(cut(box, L.Role, t), 0);
+});
+
+test('text that fades in through its animator\'s own Opacity comes in', () => {
+  const host = createHost();
+  const { comp, L } = textComp(host, [['Sub', 200, 300, 200, 44], ['Headline', 200, 400, 700, 44]], 6);
+  const box = create(host, comp, [L.Sub, L.Headline], { padding: 10, anchor: 1 });
+  L.Headline.addAnimator({ opacity: 0 });
+  const animOpacity = L.Headline.textState.children[0].children[0].children[1].children[0];
+  keys(animOpacity, [[1, 0], [1.5, 100]]);
+  near(rect(box, 0.5).w, 220, 'not shown yet');
+  for (const t of [2, 4]) near(cut(box, L.Headline, t), 0, `in at ${t}`);
+});
+
+test('a landed layer that moves again is kept in; Collapse later on doesn\'t switch that off; no jump to where a layer will be', () => {
+  // Lands under a slow line, then nudges while that one is still coming in.
+  let host = createHost();
+  let { comp, L } = textComp(host, [['Line 0', 200, 300, 600, 44], ['Line 1', 200, 370, 500, 44]], 8);
+  let box = create(host, comp, [L['Line 0'], L['Line 1']], { padding: 10, anchor: 1 });
+  slide(L['Line 0'], [[0, -900, 0, smooth], [3, 0, 0]]);
+  slide(L['Line 1'], [[0.2, -900, 0, smooth], [0.5, 0, 0], [1.0, 0, 0, smooth], [1.4, 20, 0]]);
+  for (let f = 16; f <= 60; f += 2) near(cut(box, L['Line 1'], f / 30), 0, `frame ${f}`);
+  near(jumps(box, 0.6, 2), 0);
+  // With Collapse and a layer coming in after the box collapsed.
+  host = createHost();
+  ({ comp, L } = textComp(host, [['Line 0', 200, 300, 600, 44], ['Line 1', 200, 370, 300, 44], ['Later', 200, 300, 400, 44, { inPoint: 6 }]], 10));
+  box = create(host, comp, [L['Line 0'], L['Line 1'], L.Later], { padding: 10, anchor: 1, whenEmpty: 2 });
+  slide(L['Line 0'], [[0, -900, 0, smooth], [1.2, 0, 0], [3, 0, 0, smooth], [3.5, 1500, 0]]);
+  slide(L['Line 1'], [[0.2, -900, 0, smooth], [0.4, 0, 0], [3, 0, 0, smooth], [3.5, 1500, 0]]);
+  for (const t of [0.4, 0.5, 0.6, 0.8]) near(cut(box, L['Line 1'], t), 0, `Line 1 at ${t}`);
+  // A layer that will drift later, with a pop-in getting ready meanwhile.
+  host = createHost();
+  ({ comp, L } = textComp(host, [['X', 200, 300, 600, 44], ['Z', 200, 380, 200, 44, { inPoint: 2.1 }]], 6));
+  box = create(host, comp, [L.X, L.Z], { padding: 10, anchor: 1, morphTime: 0.4 });
+  slide(L.X, [[0, 0, 0], [2.05, 0, 0, smooth], [2.6, 300, 0]]);
+  near(jumps(box, 1.5, 3), 0);
+  near(rect(box, 1.9).r, 620, 'not stretched to where X will be');
+});
+
+test('Add to Box and Create Box take a matted box off as the matte of a layer they move out of it', () => {
+  const host = createHost();
+  const comp = host.newComp({ duration: 10 });
+  const a1 = comp.layers.addText('A1', { position: [200, 200], rect: { left: 0, top: -40, width: 300, height: 40 } });
+  const a2 = comp.layers.addText('A2', { position: [200, 260], rect: { left: 0, top: -40, width: 300, height: 40 } });
+  const b1 = comp.layers.addText('B1', { position: [900, 600], rect: { left: 0, top: -40, width: 300, height: 40 } });
+  const boxA = create(host, comp, [a1, a2], { padding: 10, anchor: 1 });
+  const boxB = create(host, comp, [b1], { padding: 10, anchor: 1 });
+  comp.select(boxA, boxB);
+  host.api.matteBoxes();
+  host.alerts.length = 0;
+  host.confirmAnswer = true;
+  comp.select(boxB, a2);
+  host.api.addToBox();
+  assert.equal(a2.parent, boxB);
+  assert.equal(a2.trackMatteLayer, null);
+  assert.equal(a1.trackMatteLayer, boxA, 'the others keep it');
+  comp.select(a1, b1);
+  host.api.createBox(settings(host));
+  assert.equal(a1.trackMatteLayer, null);
+  assert.equal(b1.trackMatteLayer, null);
+});
+
+test('Release of an old box with a locked layer, Matte with a locked layer, Remove with a controller and its layers', () => {
+  let host = createHost();
+  let { comp, title, sub } = scene(host);
+  const old = oldApi('AutoBox-2.0.1.jsx');
+  globalThis.AUTOBOX_TEST = {};
+  comp.select(title, sub);
+  old.createBox(Object.assign({}, old.DEFAULTS, { layout: 2, gap: 10 }));
+  const oldBox = comp._layers.find((l) => l.name === 'AutoBox 1');
+  sub.locked = true;
+  comp.select(oldBox);
+  host.confirmAnswer = true;
+  assert.equal(host.api.hostRun('release', {}), 'ok');
+  assert.equal(sub.locked, true, 'locked again');
+  assert.deepEqual(expressions(comp).filter((e) => /Title|Subtitle/.test(e)), [], 'layers baked');
+  // Matte names a locked layer it can't matte.
+  host = createHost();
+  ({ comp, title, sub } = scene(host));
+  const box = create(host, comp, [title, sub]);
+  sub.locked = true;
+  comp.select(box);
+  host.api.matteBoxes();
+  assert.equal(title.trackMatteLayer, box);
+  assert.ok(host.alerts.some((a) => /Skipped \(locked\): Subtitle/.test(a)));
+  // A controller null and the layers on it, removed together, stay together.
+  host = createHost();
+  comp = host.newComp({ duration: 10 });
+  const a = comp.layers.addText('A', { position: [200, 280], rect: { left: 0, top: -40, width: 300, height: 40 } });
+  const b = comp.layers.addText('B', { position: [200, 340], rect: { left: 0, top: -30, width: 200, height: 30 } });
+  const c = comp.layers.addText('C', { position: [200, 420], rect: { left: 0, top: -30, width: 200, height: 30 } });
+  const box3 = create(host, comp, [a, b, c], { padding: 10, anchor: 1 });
+  const ctrl = comp.layers.addNull({ name: 'Controller', position: [300, 300] });
+  ctrl.parent = box3;
+  a.parent = ctrl;
+  b.parent = ctrl;
+  slide(ctrl, [[0, 0, 0], [2, 400, 0]]);
+  comp.select(a, ctrl, b);
+  host.api.removeFromBox();
+  assert.equal(ctrl.parent, null);
+  assert.equal(a.parent, ctrl);
+  assert.equal(b.parent, ctrl);
+  near(a.compBounds(2).l, 600, 'still follows its controller');
+});
