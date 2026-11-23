@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Property Linker</title>
+  <link rel="stylesheet" href="css/panel.css">
+</head>
+<body>
+  <main class="panel">
+
+    <section class="field">
+      <label class="label" for="property">Property</label>
+      <select id="property">
+        <option value="opacity">Opacity</option>
+        <option value="rotation">Rotation</option>
+        <option value="scale">Scale</option>
+        <option value="position">Position</option>
+        <option disabled>──────────</option>
+        <option value="selected">Selected Properties</option>
+      </select>
+      <p class="caption" id="propertyCaption"></p>
+    </section>
+
+    <section class="field">
+      <span class="label" id="modeLabel">Mode</span>
+      <div class="segmented" role="radiogroup" aria-labelledby="modeLabel">
+        <button type="button" role="radio" data-mode="absolute" aria-checked="true">Absolute</button>
+        <button type="button" role="radio" data-mode="relative" aria-checked="false">Relative</button>
+      </div>
+      <p class="caption" id="modeCaption"></p>
+    </section>
+
+    <section class="field options">
+      <label class="check">
+        <input type="checkbox" id="useExisting">
+        <span>Add to the selected control null</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="overwrite">
+        <span>Overwrite existing expressions</span>
+      </label>
+    </section>
+
+    <button type="button" class="primary" id="link">Link</button>
+
+    <div class="status" id="status" role="status" aria-live="polite" hidden>
+      <p class="status-message" id="statusMessage"></p>
+      <ul class="status-list" id="statusList"></ul>
+    </div>
+
+    <details class="help">
+      <summary>How it works</summary>
+      <ol>
+        <li>Select the layers you want to control.</li>
+        <li>Pick a property and a mode.</li>
+        <li>Click <strong>Link</strong>.</li>
+      </ol>
+      <p>A null such as <em>Opacity Control</em> is added above the layers. It only holds the control
+        (Slider, Angle, Point or Color Control); nothing is parented to it. Each layer gets an
+        expression that reads the control.</p>
+      <p><strong>Absolute:</strong> every layer takes the control's value. The control starts at the
+        top layer's current value. Keyframes on the layers are overridden.</p>
+      <p><strong>Relative:</strong> each layer keeps its own value and keyframes. The control multiplies
+        percentages (Opacity, Scale: 100 = unchanged) and adds to everything else (Rotation, Position:
+        0 = unchanged).</p>
+      <p><strong>Selected Properties:</strong> twirl open your layers and select the exact properties
+        (effect values, shape fills, text animators&hellip;), Ctrl/Cmd-clicking to pick several. Each kind
+        of property gets its own control on one null.</p>
+      <p><strong>Add to the selected control null:</strong> select an existing control null along with
+        more layers to hook them up to its control.</p>
+      <p>Renaming the null or its controls later is safe; After Effects updates the expressions.
+        Each Link is one undo step.</p>
+      <p class="version" id="version">Property Linker</p>
+    </details>
+
+  </main>
+  <script src="js/panel.js"></script>
+</body>
+</html>

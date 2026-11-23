@@ -1,0 +1,3 @@
+# Signing key/certificate made by build.py - never commit these
+.signing/
+__pycache__/

@@ -1,0 +1,189 @@
+/* Property Linker panel. Colours follow the After Effects UI brightness
+   (set from the host skin in panel.js); the defaults match AE's default dark. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --bg: #232323;
+  --text: #c9c9c9;
+  --text-strong: #e8e8e8;
+  --muted: #8f8f8f;
+  --field: #1a1a1a;
+  --field-border: #3c3c3c;
+  --field-hover: #4a4a4a;
+  --accent: #00a669;
+  --accent-hover: #00bf77;
+  --accent-text: #ffffff;
+  --ok: #3ecf8e;
+  --warn: #e8b04a;
+  --error: #ff7b7b;
+  --font: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-size: 12px;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--font-size);
+  line-height: 1.45;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+  max-width: 420px;
+}
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.caption {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 2.9em;
+}
+
+select {
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--field);
+  color: var(--text-strong);
+  border: 1px solid var(--field-border);
+  border-radius: 4px;
+  font: inherit;
+  outline: none;
+}
+
+select:hover { border-color: var(--field-hover); }
+select:focus { border-color: var(--accent); }
+
+/* Absolute / Relative */
+.segmented {
+  display: flex;
+  background: var(--field);
+  border: 1px solid var(--field-border);
+  border-radius: 4px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.segmented button {
+  flex: 1;
+  height: 22px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.segmented button:hover { color: var(--text-strong); }
+
+.segmented button[aria-checked="true"] {
+  background: var(--field-border);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.segmented button:focus-visible { outline: 1px solid var(--accent); }
+
+.options { gap: 8px; }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.check input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.primary {
+  height: 30px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.primary:hover { background: var(--accent-hover); }
+.primary:disabled { opacity: 0.5; cursor: default; }
+.primary:focus-visible { outline: 2px solid var(--text-strong); outline-offset: 1px; }
+
+/* Result of the last Link */
+.status {
+  border-left: 3px solid var(--muted);
+  background: var(--field);
+  border-radius: 0 4px 4px 0;
+  padding: 8px 10px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.status.ok { border-left-color: var(--ok); }
+.status.warn { border-left-color: var(--warn); }
+.status.error { border-left-color: var(--error); }
+
+.status-message {
+  margin: 0;
+  color: var(--text-strong);
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.status-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--text);
+  font-size: 11px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.status-list:empty { display: none; }
+.status-list li + li { margin-top: 3px; }
+
+.help {
+  font-size: 11px;
+  color: var(--text);
+}
+
+.help summary {
+  cursor: pointer;
+  color: var(--muted);
+  outline: none;
+}
+
+.help summary:hover { color: var(--text-strong); }
+.help ol { margin: 8px 0; padding-left: 18px; }
+.help p { margin: 6px 0; }
+.help strong { color: var(--text-strong); }
+.help .version { color: var(--muted); margin-top: 10px; }
